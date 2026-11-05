@@ -1,3 +1,12 @@
 #!/bin/sh
-# Stand-in for pw-metadata in the test: only logs its arguments
-echo "$*" >> "${AR_PW_LOG:-/dev/null}"
+# Stand-in for pw-metadata in the test: logs the calls that set a value to $AR_PW_LOG and remembers
+# clock.force-rate like PipeWire does; without a value it prints the key like the real pw-metadata
+log=${AR_PW_LOG:-/dev/null}
+if [ "$#" -ge 5 ]; then
+  echo "$*" >> "$log"
+  [ "$4" = clock.force-rate ] && [ "$log" != /dev/null ] && echo "$5" > "$log.rate"
+  exit 0
+fi
+echo 'Found "settings" metadata 31'
+[ -f "$log.rate" ] && echo "update: id:0 key:'clock.force-rate' value:'$(cat "$log.rate")' type:''"
+exit 0

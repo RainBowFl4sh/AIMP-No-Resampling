@@ -32,6 +32,22 @@ struct Config {
     bool autoTiming = true;         // waits based on the detected hardware
     int settleMs = 150;             // manual wait after switching (autoTiming off)
 
+    // Highest rate the plugin switches to (General tab); 0 = no limit. A track above it plays at the highest
+    // rate of its family below the limit (192 -> 96, 176.4 -> 88.2 kHz) and AIMP resamples it.
+    uint32_t maxRate = 0;
+    static const uint32_t* MaxRates(size_t* n) {
+        static const uint32_t r[] = {0, 384000, 192000, 96000, 48000};  // order of the drop-down list
+        *n = sizeof(r) / sizeof(r[0]);
+        return r;
+    }
+
+    // Exceptions (General tab): the output stays as it is for these tracks
+    bool skipLossy = false;         // lossy formats (MP3, AAC, Ogg Vorbis, Opus ...)
+    tstring skipList;               // folders (full path or folder name) and playlist names, separated by ';'
+
+    // Windows shared mode: the device format follows the track's bit depth too (Output tab, off by default)
+    bool matchBitDepth = false;
+
     // Experimental: restart AIMP so it plays with the new rate (ASIO / WASAPI exclusive / DirectSound)
     bool restartAimp = false;
     bool seamlessRestart = true;    // show a still image of AIMP while it restarts
@@ -75,6 +91,15 @@ struct Config {
         restoreOnExit = i.Bool(s, AR_T("RestoreOnExit"), restoreOnExit);
         autoTiming = i.Bool(s, AR_T("AutoTiming"), autoTiming);
         settleMs = (int)(std::max)(0LL, (std::min)(i.Int(s, AR_T("SettleMs"), settleMs), 5000LL));
+        long long mr = i.Int(s, AR_T("MaxRate"), (long long)maxRate);
+        size_t nr = 0;
+        const uint32_t* rates = MaxRates(&nr);
+        maxRate = 0;  // only the values of the list (anything else = no limit)
+        for (size_t k = 0; k < nr; k++)
+            if ((long long)rates[k] == mr) maxRate = rates[k];
+        skipLossy = i.Bool(s, AR_T("SkipLossy"), skipLossy);
+        skipList = i.Str(s, AR_T("SkipFoldersPlaylists"), skipList);
+        matchBitDepth = i.Bool(s, AR_T("MatchBitDepth"), matchBitDepth);
         restartAimp = i.Bool(s, AR_T("RestartAimp"), restartAimp);
         seamlessRestart = i.Bool(s, AR_T("SeamlessRestart"), seamlessRestart);
         bitPerfect = i.Bool(s, AR_T("BitPerfect"), bitPerfect);
@@ -102,6 +127,10 @@ struct Config {
         i.SetBool(s, AR_T("RestoreOnExit"), restoreOnExit);
         i.SetBool(s, AR_T("AutoTiming"), autoTiming);
         i.Set(s, AR_T("SettleMs"), (long long)settleMs);
+        i.Set(s, AR_T("MaxRate"), (long long)maxRate);
+        i.SetBool(s, AR_T("SkipLossy"), skipLossy);
+        i.Set(s, AR_T("SkipFoldersPlaylists"), skipList);
+        i.SetBool(s, AR_T("MatchBitDepth"), matchBitDepth);
         i.SetBool(s, AR_T("RestartAimp"), restartAimp);
         i.SetBool(s, AR_T("SeamlessRestart"), seamlessRestart);
         i.SetBool(s, AR_T("BitPerfect"), bitPerfect);

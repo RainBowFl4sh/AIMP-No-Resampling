@@ -1,8 +1,11 @@
 // Windows audio devices: enumeration and the "default format" (shared-mode rate) via IPolicyConfig.
 #pragma once
 #include <audioclient.h>
+#include <endpointvolume.h>
 #include <mmdeviceapi.h>
 #include <propsys.h>
+
+#include <atomic>
 
 #include "../Common.h"
 
@@ -178,6 +181,47 @@ inline WAVEFORMATEXTENSIBLE WithRate(WAVEFORMATEXTENSIBLE f, uint32_t hz) {
     return f;
 }
 
+static const GUID SUBTYPE_PCM = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+static const GUID SUBTYPE_FLOAT = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+
+inline bool IsExtensible(const WAVEFORMATEXTENSIBLE& f) {
+    return f.Format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && f.Format.cbSize >= 22;
+}
+// Bits that carry the signal (24 in a 32-bit container = 24)
+inline uint32_t ValidBits(const WAVEFORMATEXTENSIBLE& f) {
+    if (IsExtensible(f) && f.Samples.wValidBitsPerSample) return f.Samples.wValidBitsPerSample;
+    return f.Format.wBitsPerSample;
+}
+inline bool IsFloat(const WAVEFORMATEXTENSIBLE& f) {
+    return f.Format.wFormatTag == 3 /* WAVE_FORMAT_IEEE_FLOAT */ ||
+           (IsExtensible(f) && memcmp(&f.SubFormat, &SUBTYPE_FLOAT, sizeof(GUID)) == 0);
+}
+// "24 bit" / "32 bit float"
+inline std::wstring BitsText(const WAVEFORMATEXTENSIBLE& f) {
+    return Num(ValidBits(f)) + (IsFloat(f) ? L" bit float" : L" bit");
+}
+
+// The same format with another bit depth as integer PCM (container: bytes per sample x 8, valid: bits used)
+inline WAVEFORMATEXTENSIBLE WithBits(WAVEFORMATEXTENSIBLE f, WORD container, WORD valid) {
+    WORD ch = f.Format.nChannels;
+    DWORD mask = IsExtensible(f) ? f.dwChannelMask : (ch == 1 ? 4u : ch == 2 ? 3u : 0u);
+    f.Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
+    f.Format.cbSize = 22;
+    f.Format.wBitsPerSample = container;
+    f.Samples.wValidBitsPerSample = valid;
+    f.dwChannelMask = mask;
+    f.SubFormat = SUBTYPE_PCM;
+    f.Format.nBlockAlign = (WORD)(ch * container / 8);
+    f.Format.nAvgBytesPerSec = f.Format.nSamplesPerSec * f.Format.nBlockAlign;
+    return f;
+}
+
+// Same rate, channels and sample format (what Windows reports may differ in unimportant fields)
+inline bool SameFormat(const WAVEFORMATEXTENSIBLE& a, const WAVEFORMATEXTENSIBLE& b) {
+    return a.Format.nSamplesPerSec == b.Format.nSamplesPerSec && a.Format.nChannels == b.Format.nChannels &&
+           a.Format.wBitsPerSample == b.Format.wBitsPerSample && ValidBits(a) == ValidBits(b) && IsFloat(a) == IsFloat(b);
+}
+
 // Asks the driver whether it supports this format in exclusive mode (= real hardware capability).
 // 1 = yes, 0 = no, -1 = unknown (e.g. the device is held exclusively by Voicemeeter).
 inline int SupportsExclusive(const std::wstring& id, WAVEFORMATEXTENSIBLE f) {
@@ -260,12 +304,110 @@ inline bool SetDeviceFormat(const std::wstring& id, WAVEFORMATEXTENSIBLE f) {
     // Did it really change? (Windows sometimes reports success without changing anything)
     WAVEFORMATEXTENSIBLE check;
     for (int i = 0; i < 20; i++) {
-        if (GetDeviceFormat(id, check) && check.Format.nSamplesPerSec == f.Format.nSamplesPerSec) return true;
+        if (GetDeviceFormat(id, check) && check.Format.nSamplesPerSec == f.Format.nSamplesPerSec &&
+            check.Format.wBitsPerSample == f.Format.wBitsPerSample && ValidBits(check) == ValidBits(f))
+            return true;
         SleepMs(25);
     }
     if (SUCCEEDED(hr)) Log(L"  Windows accepted the call but did not change the format");
     return false;
 }
+
+// ---- Audio chain (U2): what else Windows does with the signal of a device
+
+static const IID IID_IAudioEndpointVolume_ = {0x5CDF2C82, 0x841E, 0x4546, {0x97, 0x22, 0x0C, 0xF7, 0x40, 0x78, 0x22, 0x9A}};
+// PKEY_AudioEndpoint_Disable_SysFx: 1 = "audio enhancements" switched off for the device
+static const PROPERTYKEY KEY_DisableSysFx = {{0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}}, 5};
+
+struct DeviceState {
+    bool found = false;
+    WAVEFORMATEXTENSIBLE format{};  // Windows default format (shared mode)
+    bool formatKnown = false;
+    int volume = -1;                // Windows volume of the device in %, -1 = unknown
+    bool muted = false;
+    int enhancements = -1;          // 1 = on, 0 = off, -1 = unknown
+};
+
+inline DeviceState ReadDeviceState(const std::wstring& id) {
+    DeviceState st;
+    Com<IMMDeviceEnumerator> en;
+    Com<IMMDevice> d;
+    if (id.empty() || !Enumerator(en) || FAILED(en->GetDevice(id.c_str(), d.OutT()))) return st;
+    st.found = true;
+    st.formatKnown = GetDeviceFormat(id, st.format);
+    Com<IAudioEndpointVolume> vol;
+    if (SUCCEEDED(d->Activate(IID_IAudioEndpointVolume_, CLSCTX_ALL, nullptr, vol.Out())) && vol) {
+        float level = 0;
+        BOOL mute = FALSE;
+        if (SUCCEEDED(vol->GetMasterVolumeLevelScalar(&level))) st.volume = (int)(level * 100.0f + 0.5f);
+        if (SUCCEEDED(vol->GetMute(&mute))) st.muted = mute != FALSE;
+    }
+    Com<IPropertyStore> ps;
+    if (SUCCEEDED(d->OpenPropertyStore(STGM_READ, ps.OutT()))) {
+        PROPVARIANT v;
+        PropVariantInit(&v);
+        if (SUCCEEDED(ps->GetValue(KEY_DisableSysFx, &v)) && (v.vt == VT_UI4 || v.vt == VT_I4)) st.enhancements = v.ulVal ? 0 : 1;
+        PropVariantClear(&v);
+    }
+    return st;
+}
+
+// ---- Changes of the outputs (B5): Windows reports a new default device, a device that appears or
+// disappears, or a changed default format. The calls come on a thread of Windows' audio service; only the
+// time and the kind are noted here, the plugin looks at them once a second on AIMP's main thread.
+static const IID IID_IMMNotificationClient_ = {0x7991EEC9, 0x7E89, 0x4D85, {0x83, 0x90, 0x6C, 0x70, 0x3C, 0xEC, 0x60, 0xC0}};
+
+class DeviceWatcher final : public IMMNotificationClient {
+    Com<IMMDeviceEnumerator> en_;
+    bool registered_ = false;
+    std::atomic<int64_t>* at_;  // NowMs() of the last change (owned by the engine, read on the main thread)
+    std::atomic<int>* what_;    // 1 = default device, 2 = default format, 3 = device added / removed
+
+    void Mark(int kind) {
+        *what_ = kind;
+        *at_ = NowMs();
+    }
+
+public:
+    DeviceWatcher(std::atomic<int64_t>* at, std::atomic<int>* what) : at_(at), what_(what) {}
+
+    // Registered and unregistered on the worker (COM); false = not available (then only AIMP's own output and
+    // Voicemeeter are watched)
+    bool Start() {
+        if (registered_ || !Enumerator(en_)) return registered_;
+        registered_ = SUCCEEDED(en_->RegisterEndpointNotificationCallback(this));
+        return registered_;
+    }
+    void Stop() {
+        if (registered_ && en_) en_->UnregisterEndpointNotificationCallback(this);
+        registered_ = false;
+        en_.Out();  // released on the thread that created it
+    }
+
+    // A stack object of the worker; Windows' references only keep it while it is registered
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (IsEqualGUID(riid, IID_IUnknown) || IsEqualGUID(riid, IID_IMMNotificationClient_)) {
+            *ppv = static_cast<IMMNotificationClient*>(this);
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return 2; }
+    ULONG STDMETHODCALLTYPE Release() override { return 1; }
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { Mark(3); return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override {
+        if (flow == eRender && role == eConsole) Mark(1);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY key) override {
+        if (IsEqualGUID(key.fmtid, KEY_DeviceFormat.fmtid) && key.pid == KEY_DeviceFormat.pid) Mark(2);
+        return S_OK;
+    }
+};
 
 }  // namespace win
 }  // namespace ar

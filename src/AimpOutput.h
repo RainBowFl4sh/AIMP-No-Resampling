@@ -131,6 +131,17 @@ public:
         return cur > 0 ? (uint32_t)cur : 0;
     }
 
+    // The same without reading AIMP.ini again (once a second while playing, see Engine::Tick): AIMP's current
+    // value of the key found by AimpRate(); 0 = not known yet
+    uint32_t LiveAimpRate() {
+        if (rateKey.empty()) return 0;
+        auto cfg = Service<IAIMPServiceConfig>(IID_IAIMPServiceConfig);
+        auto key = MakeString(rateKey);
+        INT32 cur = 0;
+        if (!cfg || !key || Failed(cfg->GetValueAsInt32(key.Get(), &cur))) return 0;
+        return cur > 0 ? (uint32_t)cur : 0;
+    }
+
     // While plugins load, AIMP has not opened its output yet: AIMP_PLAYER_PROPID_OUTPUT still names the
     // default device ("Windows Default"), whatever is selected. The output AIMP will use is the one in its
     // settings; the output really used is logged with every track ("AIMP output: ...").

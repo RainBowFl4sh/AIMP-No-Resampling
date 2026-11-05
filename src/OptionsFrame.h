@@ -3,100 +3,16 @@
 #pragma once
 #include "AvatarFx.h"
 #include "AvatarPng.h"
-#include "ChangelogText.h"
+#include "ChainWindow.h"
 #include "Engine.h"
+#include "UiCommon.h"
 #include "apiGUI.h"
 #include "apiOptions.h"
 #ifdef _WIN32
 #include <commdlg.h>
 #endif
 
-#ifndef MB_ICONINFORMATION  // Linux: AIMP's message dialog takes the Windows flags
-#define MB_OK 0
-#define MB_ICONWARNING 0x30
-#define MB_ICONINFORMATION 0x40
-#endif
-
 namespace ar {
-
-// AIMP's own message box (follows the skin); false if this AIMP version has none
-inline bool ShowMessage(const tstring& text, DWORD flags = MB_OK | MB_ICONINFORMATION, HWND owner = (HWND)0) {
-    auto ui = Service<IAIMPServiceUI>(IID_IAIMPServiceUI);
-    Ptr<IAIMPUIMessageDialog> dlg;
-    auto caption = MakeString(AR_T(AR_PLUGIN_NAME));
-    auto t = MakeString(text);
-    if (!ui || Failed(ui->QueryInterface(IID_IAIMPUIMessageDialog, dlg.OutV())) || !dlg || !caption || !t) return false;
-    dlg->Execute(owner, caption.Get(), t.Get(), flags);
-    return true;
-}
-
-// Visible text of a control: a translation key (the English text, UTF-8), a fixed text (paths) or a
-// function that puts the text together. Kept with the control, so a language change can set it again.
-struct Tx {
-    std::function<tstring()> fn;
-    Tx(const char* key) : fn([key] { return Tr(key); }) {}
-    Tx(const tstring& fixed) : fn([fixed] { return fixed; }) {}
-    explicit Tx(std::function<tstring()> f) : fn(std::move(f)) {}
-};
-
-class ChangeHandler : public ComObject<IAIMPUIChangeEvents> {
-    std::function<void(IUnknown*)> fn_;
-
-protected:
-    bool Supports(REFIID riid) override { return EqualGUID(riid, IID_IAIMPUIChangeEvents); }
-
-public:
-    explicit ChangeHandler(std::function<void(IUnknown*)> f) : fn_(std::move(f)) {}
-    void WINAPI OnChanged(IUnknown* sender) override { if (fn_) fn_(sender); }
-};
-
-// IAIMPUIDrawEvents as AIMP calls it. On Windows AIMP passes the rectangle of OnDraw by reference (Delphi
-// "const R: TRect"; by value only in AIMP for Linux, built with Lazarus). The SDK header declares it by value,
-// which breaks 32-bit AIMP (wrong rectangle, unbalanced stack) - same vtable, AIMP's convention.
-class AimpDrawEvents : public IUnknown {
-public:
-#ifdef _WIN32
-    virtual void WINAPI OnDraw(IUnknown* sender, HCANVAS canvas, const RECT& r) = 0;
-#else
-    virtual void WINAPI OnDraw(IUnknown* sender, HCANVAS canvas, const RECT r) = 0;
-#endif
-};
-
-// Drawing and mouse events of a paint box (the author's picture on the About tab)
-class PaintEvents final : public AimpDrawEvents, public IAIMPUIMouseEvents {
-    std::atomic<long> refs_{0};
-
-public:
-    std::function<void(HCANVAS, const RECT&)> draw;
-    std::function<void(int, int, int)> mouse;  // 0 = move, 1 = left button down, 2 = up, 3 = mouse left the box
-
-    HRESULT __unknwncall QueryInterface(REFIID riid, LPVOID* ppv) override {
-        if (!ppv) return E_POINTER;
-        if (EqualGUID(riid, IID_IUnknown) || EqualGUID(riid, IID_IAIMPUIDrawEvents)) *ppv = static_cast<AimpDrawEvents*>(this);
-        else if (EqualGUID(riid, IID_IAIMPUIMouseEvents)) *ppv = static_cast<IAIMPUIMouseEvents*>(this);
-        else { *ppv = nullptr; return E_NOINTERFACE; }
-        AddRef();
-        return S_OK;
-    }
-    DWORD __unknwncall AddRef() override { return (DWORD)++refs_; }
-    DWORD __unknwncall Release() override {
-        long r = --refs_;
-        if (r == 0) delete this;
-        return (DWORD)r;
-    }
-#ifdef _WIN32
-    void WINAPI OnDraw(IUnknown*, HCANVAS canvas, const RECT& r) override { if (draw) draw(canvas, r); }
-#else
-    void WINAPI OnDraw(IUnknown*, HCANVAS canvas, const RECT r) override { if (draw) draw(canvas, r); }
-#endif
-    void WINAPI OnMouseDoubleClick(IUnknown*, TAIMPUIMouseButton b, INT32 x, INT32 y, WORD) override {
-        if (mouse && b == umbLeft) mouse(1, x, y);  // a quick second click counts as a click again
-    }
-    void WINAPI OnMouseDown(IUnknown*, TAIMPUIMouseButton b, INT32 x, INT32 y, WORD) override { if (mouse && b == umbLeft) mouse(1, x, y); }
-    void WINAPI OnMouseLeave(IUnknown*) override { if (mouse) mouse(3, -1, -1); }
-    void WINAPI OnMouseMove(IUnknown*, INT32 x, INT32 y, WORD) override { if (mouse) mouse(0, x, y); }
-    void WINAPI OnMouseUp(IUnknown*, TAIMPUIMouseButton b, INT32 x, INT32 y, WORD) override { if (mouse && b == umbLeft) mouse(2, x, y); }
-};
 
 class OptionsFrame : public ComObject<IAIMPOptionsDialogFrame> {
     Engine* engine_;
@@ -123,6 +39,17 @@ class OptionsFrame : public ComObject<IAIMPOptionsDialogFrame> {
     Ptr<IAIMPUIMemo> memo_;
     Ptr<IAIMPUIButton> btRefresh_, btReset_, btTest_;
     tstring lastStats_;
+    // General tab: highest rate (F2) and exceptions (F3)
+    Ptr<IAIMPUIComboBox> coMaxRate_;
+    Ptr<IAIMPUICheckBox> cbSkipLossy_;
+    Ptr<IAIMPUIEdit> edSkip_;
+    Ptr<IAIMPUIButton> btSkipFolder_;
+    // Output tab: bit depth follows the track (F5), bit-perfect status and the audio chain (U2)
+    Ptr<IAIMPUICheckBox> cbBits_;
+    Ptr<IAIMPUIScrollBox> outBox_;             // the Output tab scrolls: the audio chain is below its settings
+    std::unique_ptr<ChainPanel> chainPanel_;
+    tstring chainText_;                        // what the panel shows now (only changed controls are touched)
+    int64_t chainAt_ = 0;
     // Advanced tab: language and settings file
     Ptr<IAIMPUIComboBox> coLang_;
     Ptr<IAIMPUIButton> btExport_, btImport_;
@@ -519,7 +446,7 @@ public:
             for (auto& l : lines(extraNotes)) add(l);
             flush();
         }
-        for (auto& l : lines(AR_CHANGELOG_TEXT)) add(l);
+        for (auto& l : lines(ChangelogSource())) add(l);
         flush();
         return out;
     }
@@ -552,46 +479,85 @@ public:
         y = 8;
         Label(g, "Switches your audio output to the sample rate of each track, so nothing gets resampled "
                  "(bit-perfect playback).", 10, y, 455, 34);                                                y += 40;
-        Label(g, "Warning: only use this plugin while you are listening to music and nothing else. It changes "
-                 "the sample rate of your audio devices (and Voicemeeter) with every track. If other "
-                 "applications play sound at the same time (games, videos, calls), disable the plugin and "
-                 "let Windows/AIMP resample instead.", 10, y, 455, 82, true);                                y += 90;
+        // Voicemeeter is only mentioned (and its tab only shown) where it is installed
+#ifdef _WIN32
+        const bool vmInstalled = win::Voicemeeter::Get().Installed();
+#else
+        const bool vmInstalled = false;
+#endif
+        Label(g, vmInstalled
+                     ? "Warning: only use this plugin while you are listening to music and nothing else. It changes "
+                       "the sample rate of your audio devices (and Voicemeeter) with every track. If other "
+                       "applications play sound at the same time (games, videos, calls), disable the plugin and "
+                       "let Windows/AIMP resample instead."
+                     : "Warning: only use this plugin while you are listening to music and nothing else. It changes "
+                       "the sample rate of your audio devices with every track. If other applications play sound "
+                       "at the same time (games, videos, calls), disable the plugin and let Windows/AIMP resample "
+                       "instead.", 10, y, 455, 82, true);                                                    y += 90;
         cbEnabled_ = Check(g, "Enable Prevent Resampling", 10, y, 455);                                      y += 26;
         cbMultiples_ = Check(g, "Fall back to integer multiples if needed (44.1 → 88.2 kHz)", 10, y, 455); y += 24;
-        cbRestore_ = Check(g, "Restore the original sample rates when AIMP closes", 10, y, 455);             y += 24;
-        cbAutoTiming_ = Check(g, "Automatic timing based on your hardware", 10, y, 455);                     y += 22;
-        Label(g, Tx([this] { return DetectedText(); }), 28, y, 437, 34);                                     y += 40;
-        Label(g, "Settle time without automatic timing (ms):", 10, y + 3, 295);
-        spSettle_ = Make<IAIMPUISpinEdit>(g, IID_IAIMPUISpinEdit, 315, y, 150, kRowH);
-        if (spSettle_) {
-            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUETYPE, AIMPUI_SPINEDIT_VALUETYPE_INTEGER);
-            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MINVALUE, 0);
-            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MAXVALUE, 5000);
-            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_INCREMENT, 50);
-        }                                                                                                    y += 34;
+        cbRestore_ = Check(g, "Restore the original sample rates when AIMP closes", 10, y, 455);             y += 30;
+        // F2: highest rate (devices with problems at high rates)
+        Label(g, "Highest sample rate:", 10, y + 3, 195);
+        coMaxRate_ = Combo(g, 210, y, 255);                                                                  y += 28;
+#ifdef _WIN32
+        Label(g, "Higher rates are lowered within their family: 192 → 96, 176.4 → 88.2 kHz (AIMP resamples them).",
+              10, y, 455, 34);                                                                               y += 40;
+#else
+        Label(g, "AIMP for Linux plays every track at its own rate (Output tab) - this setting has no effect there.",
+              10, y, 455, 34);                                                                               y += 40;
+        Enable(coMaxRate_.Get(), false);
+#endif
+        // F3: exceptions - the output stays as it is for these tracks
+        cbSkipLossy_ = Check(g, "Do not switch for lossy formats (MP3, AAC, Ogg Vorbis, Opus …)", 10, y, 455); y += 26;
+        Label(g, "Do not switch for these folders or playlists:", 10, y, 455);                              y += 20;
+        edSkip_ = Make<IAIMPUIEdit>(g, IID_IAIMPUIEdit, 10, y, 365, kRowH);
+        btSkipFolder_ = Button(g, "Folder...", 381, y - 1, 84);                                              y += 30;
+        Label(g, "Separated by ';'. A full path also covers its subfolders; a name matches every folder and "
+                 "playlist of that name.", 10, y, 455, 50);
 
         // --- Output
         IAIMPUIWinControl* o = Page(AR_T("Output"), "Output");
+        // The tab scrolls (U2): below the settings come the bit-perfect status and the audio chain, its first
+        // step already peeks out at the bottom edge so it is clear that there is more
+        if (o && Succeeded(ui_->CreateControl(form_.Get(), o, nullptr, nullptr, IID_IAIMPUIScrollBox, outBox_.OutV())) && outBox_) {
+            outBox_->SetValueAsInt32(AIMPUI_SCROLLBOX_PROPID_BORDERS, 0);
+            TAIMPUIControlPlacement sp;
+            memset(&sp, 0, sizeof(sp));
+            sp.Alignment = ualClient;
+            outBox_->SetPlacement(sp);
+#ifdef _WIN32
+            // The box paints its labels itself, its check boxes and lists are windows of their own: while scrolling
+            // they moved at different times (the text lagged behind and tore). Composited, Windows paints the box
+            // and everything in it in one go, at the screen's refresh like a normal scrolling list.
+            if (HWND h = outBox_->GetHandle())
+                SetWindowLongPtrW(h, GWL_EXSTYLE, GetWindowLongPtrW(h, GWL_EXSTYLE) | WS_EX_COMPOSITED);
+#endif
+            o = outBox_.Get();
+        }
         y = 8;
         Label(o, "AIMP output device:", 10, y + 3, 195);
-        coAimpOut_ = Combo(o, 210, y, 255);                                                                  y += 28;
-        Label(o, "Same setting as AIMP → Playback → Output. Only changed if you pick another device here.",
-              10, y, 455, 34);                                                                               y += 36;
+        coAimpOut_ = Combo(o, 210, y, 255);
+        if (coAimpOut_) Bind(coAimpOut_.Get(), AIMPUI_CONTROL_PROPID_HINT,
+                             "Same setting as AIMP → Playback → Output. Only changed if you pick another device here.");
+                                                                                                             y += 30;
         Label(o, "Output type:", 10, y + 3, 195);
-        coMode_ = Combo(o, 210, y, 255);                                                                     y += 32;
+        coMode_ = Combo(o, 210, y, 255);                                                                     y += 30;
 #ifdef _WIN32
         Label(o, "Windows device:", 10, y + 3, 195);
         coWinDev_ = Combo(o, 210, y, 255);                                                                   y += 28;
         Label(o, "Used for WASAPI shared and DirectSound. Automatic = the device of AIMP's output, otherwise the "
-                 "Windows default device.", 10, y, 455, 34);                                                 y += 40;
+                 "Windows default device.", 10, y, 455, 34);                                                 y += 38;
         Label(o, "Additional devices to switch:", 10, y + 3, 195);
         edExtra_ = Make<IAIMPUIEdit>(o, IID_IAIMPUIEdit, 210, y, 255, kRowH);                                y += 28;
-        Label(o, "Parts of device names, separated by ';' (e.g. FiiO; Realtek Digital).", 10, y, 455);      y += 30;
+        Label(o, "Parts of device names, separated by ';' (e.g. FiiO; Realtek Digital).", 10, y, 455);      y += 24;
+        // F5: the default format's bit depth follows the track as well (off by default)
+        cbBits_ = Check(o, "Bit depth follows the track too (16 / 24 / 32 bit, WASAPI shared)", 10, y, 455); y += 28;
 #else
         Label(o, "AIMP for Linux resamples every track to its own rate (Sound Output -> Parameters). "
                  "PipeWire is set to that rate ('pw-metadata clock.force-rate'), so nothing is resampled a "
                  "second time. Following each track needs an AIMP restart - planned for a later version.",
-              10, y, 455, 66);                                                                               y += 76;
+              10, y, 455, 66);                                                                               y += 74;
 #endif
         // Bit-perfect mode (every platform): switches off AIMP's own sound processing, restores it when off
         cbBp_ = Check(o, "Bit-perfect mode (switch off AIMP's sound processing)", 10, y, 455);              y += 22;
@@ -601,12 +567,12 @@ public:
         cbBpGapless_ = Check(o, "No gapless playback (short pause between tracks)", 28, y, 437);              y += 24;
 #ifdef _WIN32
         lbBpStatus_ = Label(o, tstring(), 28, y, 297, 34);
-        btBpRestart_ = Button(o, "Restart AIMP now", 335, y + 4, 130);                                       y += 38;
-        Label(o, "Voicemeeter: for 100 % bit-perfect output, do not use its equalizer or other effects on "
-                 "the bus and keep the fader at 0 dB.", 10, y, 455, 34);
+        btBpRestart_ = Button(o, "Restart AIMP now", 335, y + 4, 130);                                       y += 42;
 #else
-        lbBpStatus_ = Label(o, tstring(), 28, y, 437, 34);
+        lbBpStatus_ = Label(o, tstring(), 28, y, 437, 34);                                                   y += 42;
 #endif
+        // U2: is the way to the device bit-perfect right now, and the audio chain with every step
+        if (o) chainPanel_.reset(new ChainPanel(ui_.Get(), form_.Get(), o, 10, y - 6, 455));
 
         // --- ASIO / Exclusive (experimental restart)
 #ifdef _WIN32
@@ -629,8 +595,12 @@ public:
         cbAsioForce_ = Check(x, "Set the ASIO driver's rate directly (only if AIMP does not)", 10, y, 455);
 #endif
 
-        // --- Voicemeeter (the same page on every platform; on Linux everything is shown but disabled)
+        // --- Voicemeeter: the tab is only shown where Voicemeeter is installed (never on Linux); hidden, it
+        // keeps its index, so the tab numbers stay the same (Restart\ReopenSettings)
         IAIMPUIWinControl* v = Page(AR_T("Voicemeeter"), "Voicemeeter");
+        vmTab_ = (int)containers_.size() - 1;
+        vmTabHidden_ = !vmInstalled;
+        if (v && vmTabHidden_) containers_.back()->SetValueAsInt32(AIMPUI_TABSHEET_PROPID_VISIBLE, 0);
         y = 8;
 #ifdef _WIN32
         Label(v, "Only relevant if you use Voicemeeter (VB-Audio). Voicemeeter exists for Windows only, so "
@@ -653,7 +623,9 @@ public:
 #ifdef _WIN32
         Label(v, "Required: tick “Auto restart audio engine (all devices)” in Voicemeeter's settings. "
                  "Without it, outputs on WDM (e.g. A2) can turn red after a rate change or when AIMP closes. "
-                 "The Voicemeeter API offers no way to set this option from the plugin.", 10, y, 455, 66, true);
+                 "The Voicemeeter API offers no way to set this option from the plugin.", 10, y, 455, 66, true); y += 72;
+        Label(v, "Voicemeeter: for 100 % bit-perfect output, do not use its equalizer or other effects on "
+                 "the bus and keep the fader at 0 dB.", 10, y, 455, 34);
 #else
         for (IAIMPPropertyList* c : std::initializer_list<IAIMPPropertyList*>{
                  cbVm_.Get(), cbVmEngine_.Get(), cbVmAllBuses_.Get(), cbVmAsio_.Get(), coVmA1_.Get()})
@@ -669,6 +641,17 @@ public:
         btExport_ = Button(st, "Export...", 150, y, 100);
         btImport_ = Button(st, "Import...", 256, y, 100);
         Link(st, "Open folder", FolderUrl(Ini::Get().Path()), 366, y + 4, 99);                             y += 33;
+        // Timing after a switch (moved here from the General tab in 2.7.0)
+        cbAutoTiming_ = Check(st, "Automatic timing based on your hardware", 10, y, 455);                    y += 22;
+        Label(st, Tx([this] { return DetectedText(); }), 28, y, 437, 34);                                    y += 38;
+        Label(st, "Settle time without automatic timing (ms):", 10, y + 3, 295);
+        spSettle_ = Make<IAIMPUISpinEdit>(st, IID_IAIMPUISpinEdit, 315, y, 150, kRowH);
+        if (spSettle_) {
+            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUETYPE, AIMPUI_SPINEDIT_VALUETYPE_INTEGER);
+            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MINVALUE, 0);
+            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MAXVALUE, 5000);
+            spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_INCREMENT, 50);
+        }                                                                                                    y += 32;
         memo_ = Memo(st, 10, y, 455, 370 - y);
         btRefresh_ = Button(st, "Refresh", 10, 378, 110);
         btReset_ = Button(st, "Reset counters", 128, 378, 130);
@@ -813,6 +796,11 @@ public:
         Fill(coVmA1_.Get(), {Tr("(Voicemeeter is Windows only)")});
         Select(coVmA1_.Get(), 0);
 #endif
+        size_t nRates = 0;
+        const uint32_t* rates = Config::MaxRates(&nRates);
+        std::vector<tstring> rateItems;
+        for (size_t i = 0; i < nRates; i++) rateItems.push_back(rates[i] ? Khz(rates[i]) : Tr("No limit"));
+        Fill(coMaxRate_.Get(), rateItems);
         Fill(coInterval_.Get(), {Tr("at every AIMP start"), Tr("once a day"), Tr("once a week"), Tr("once a month")});
         tstring aimpLang;
         Language detected = AimpLanguage(&aimpLang);
@@ -830,6 +818,14 @@ public:
         auto s = MakeString(name + AR_T(" (") + Tr("not connected") + AR_T(")"));
         if (s) c->Add(s.Get(), 0);
         Select(c, (int)list.size());
+    }
+
+    void SelectMaxRate(uint32_t hz) {
+        size_t n = 0;
+        const uint32_t* rates = Config::MaxRates(&n);
+        Select(coMaxRate_.Get(), 0);
+        for (size_t i = 0; i < n; i++)
+            if (rates[i] == hz) Select(coMaxRate_.Get(), (int)i);
     }
 
     // Enables/disables dependent controls
@@ -867,6 +863,10 @@ public:
         SetChecked(cbBpVolume_.Get(), c.bpVolume100);
         SetChecked(cbBpGapless_.Get(), c.bpNoGapless);
         if (spSettle_) spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUE, c.settleMs);
+        SelectMaxRate(c.maxRate);
+        SetChecked(cbSkipLossy_.Get(), c.skipLossy);
+        SetText(edSkip_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT, c.skipList);
+        SetChecked(cbBits_.Get(), c.matchBitDepth);
         Select(coMode_.Get(), 0);
         for (size_t i = 0; i < modes_.size(); i++)
             if (modes_[i] == c.mode) Select(coMode_.Get(), (int)i);
@@ -909,7 +909,14 @@ public:
             c.settleMs = (std::max)(0, (std::min)((int)v, 5000));
         int m = Index(coMode_.Get());
         if (m >= 0 && m < (int)modes_.size()) c.mode = modes_[m];
+        size_t nRates = 0;
+        const uint32_t* rates = Config::MaxRates(&nRates);
+        int r = Index(coMaxRate_.Get());
+        if (r >= 0 && r < (int)nRates) c.maxRate = rates[r];
+        c.skipLossy = Checked(cbSkipLossy_.Get());
+        if (edSkip_) c.skipList = Trim(GetText(edSkip_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT));
 #ifdef _WIN32
+        c.matchBitDepth = Checked(cbBits_.Get());
         int i = Index(coWinDev_.Get());
         c.windowsDevice = (i > 0 && i <= (int)winDevices_.size()) ? winDevices_[i - 1] : tstring();
         i = Index(coAsio_.Get());
@@ -966,9 +973,13 @@ public:
 #endif
         engine_->bitPerfect.Apply(c);
         RefreshBitPerfect();
-        if (wasEnabled != c.enabled) Log(c.enabled ? AR_T("Plugin enabled") : AR_T("Plugin disabled"));
-        if (!wasEnabled && c.enabled) engine_->Recheck();  // switch to the rate of the track that is playing now
+        if (wasEnabled != c.enabled) {
+            Log(c.enabled ? AR_T("Plugin enabled (settings page)") : AR_T("Plugin disabled (settings page)"));
+            if (c.enabled) engine_->Recheck();  // switch to the rate of the track that is playing now
+            if (engine_->onEnabledChanged) engine_->onEnabledChanged();  // AIMP's menu
+        }
         Log(AR_T("Settings saved"));
+        RefreshChain(true);
     }
 
     // Bit-perfect mode: which settings still wait for a restart of AIMP
@@ -1005,9 +1016,89 @@ public:
         }
         if (!line.empty()) wrapped += Wrap(line, 76);
         text = wrapped;
+        RefreshChain(false);
         if (text == lastStats_) return;
         lastStats_ = text;
         SetText(memo_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT, text);
+    }
+
+    // Output tab: bit-perfect status of the way to the device (at most every 2 s, it reads the devices)
+    void RefreshChain(bool force) {
+        if (!chainPanel_) return;
+        int64_t now = NowMs();
+        if (!force && chainAt_ && now - chainAt_ < 2000) return;
+        chainAt_ = now;
+        ChainView v = BuildChain(GatherChain(*engine_));
+        tstring key = v.summary;
+        for (auto& st : v.stages) key += AR_T("|") + Num((int)st.status) + st.title + AR_T("\n") + st.text;
+        for (auto& st : v.stages)
+            for (auto& r : st.rows) key += Num((int)r.tone);
+        if (!force && key == chainText_) return;
+        chainText_ = key;
+        chainPanel_->Show(v);
+    }
+
+    // Index of the open tab (0 = General)
+    int ActiveTab() {
+        if (!pages_) return 0;
+        Ptr<IAIMPUITabSheet> sheet;  // AIMP: the active tab sheet (object property)
+        if (Succeeded(pages_->GetValueAsObject(AIMPUI_PAGECONTROL_PROPID_ACTIVE, IID_IAIMPUITabSheet, sheet.OutV())) && sheet)
+            for (size_t i = 0; i < containers_.size(); i++)
+                if (Same(containers_[i].Get(), sheet.Get())) return (int)i;
+        INT32 i = 0;
+        if (Succeeded(pages_->GetValueAsInt32(AIMPUI_PAGECONTROL_PROPID_ACTIVE, &i)) && i >= 0 && i < (int)containers_.size()) return i;
+        return 0;
+    }
+
+    int pendingTab = -1;  // tab to open when the page is created next (after a restart)
+    int vmTab_ = -1;            // index of the Voicemeeter tab
+    bool vmTabHidden_ = false;  // Voicemeeter is not installed: tab hidden
+
+    // Opens a tab (after a restart for the bit-perfect mode: the same tab as before)
+    void ShowTab(int index) {
+        if (index == vmTab_ && vmTabHidden_) index = 0;  // Voicemeeter was uninstalled meanwhile
+        if (!pages_ || index < 0 || index >= (int)containers_.size()) return;
+        if (Failed(pages_->SetValueAsObject(AIMPUI_PAGECONTROL_PROPID_ACTIVE, containers_[index].Get())))
+            pages_->SetValueAsInt32(AIMPUI_PAGECONTROL_PROPID_ACTIVE, index);
+        if (outBox_ && btBpRestart_) outBox_->MakeVisible(btBpRestart_.Get());
+    }
+
+    // The plugin was switched on or off outside the page (AIMP's menu, a hotkey)
+    void OnEnabledChanged() {
+        if (!form_) return;
+        bool wasLoading = loading_;
+        loading_ = true;
+        SetChecked(cbEnabled_.Get(), engine_->cfg.enabled);
+        UpdateDependencies();
+        loading_ = wasLoading;
+        RefreshStats();
+        RefreshChain(true);
+    }
+
+    // F3: adds a folder picked in AIMP's folder dialog to the exception list
+    void AddSkipFolder() {
+        Ptr<IAIMPUIBrowseFolderDialog> dlg;
+        if (ui_ && (Failed(ui_->QueryInterface(IID_IAIMPUIBrowseFolderDialog, dlg.OutV())) || !dlg))
+            ui_->CreateObject(form_.Get(), nullptr, IID_IAIMPUIBrowseFolderDialog, dlg.OutV());
+        if (!dlg) {
+            Log(AR_T("No folder dialog in this AIMP version - type the folder into the list"));
+            return;
+        }
+        Ptr<IAIMPObjectList> sel;
+        auto start = MakeString(tstring());
+        if (dlg->Execute(form_->GetHandle(), 0, start.Get(), sel.Out()) != S_OK || !sel) return;
+        tstring list = Trim(GetText(edSkip_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT));
+        for (INT32 i = 0; i < sel->GetCount(); i++) {
+            Ptr<IAIMPString> f;
+            if (Failed(sel->GetObject(i, IID_IAIMPString, f.OutV())) || !f) continue;
+            tstring path = FromString(f.Get());
+            if (path.empty() || !MatchSkipList(list, path + AR_T(AR_SEP "x"), tstring()).empty()) continue;  // already in
+            while (!list.empty() && (list.back() == AR_T(';') || list.back() == AR_T(' '))) list.pop_back();
+            list += (list.empty() ? tstring() : tstring(AR_T("; "))) + path;
+        }
+        SetText(edSkip_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT, list);
+        auto svc = Service<IAIMPServiceOptionsDialog>(IID_IAIMPServiceOptionsDialog);
+        if (svc) svc->FrameModified(this);
     }
 
     bool IsOpen() const { return (bool)form_; }
@@ -1075,6 +1166,9 @@ public:
         SelectName(coAsio_.Get(), asioDrivers_, cur.asioDriver);
 #endif
         if (vmA1 > 0) Select(coVmA1_.Get(), vmA1);
+        SelectMaxRate(cur.maxRate);
+        chainText_.clear();
+        RefreshChain(true);
         Select(coInterval_.Get(), cur.updateInterval);
         Select(coLang_.Get(), (int)cur.language);
         lastStats_.clear();
@@ -1211,7 +1305,14 @@ public:
         if (Same(sender, btInstall_.Get())) { engine_->updater.Install(); return; }
         if (Same(sender, btExport_.Get())) { ExportSettings(); return; }
         if (Same(sender, btImport_.Get())) { ImportSettings(); return; }
-        if (Same(sender, btBpRestart_.Get())) { engine_->RestartForSettings(); return; }
+        if (Same(sender, btBpRestart_.Get())) {
+            // back on this page after the restart (Plugin.cpp opens it again once AIMP has started)
+            Ini::Get().Set(AR_T("Restart"), AR_T("ReopenSettings"), (long long)ActiveTab());
+            Ini::Get().Save();
+            engine_->RestartForSettings();
+            return;
+        }
+        if (Same(sender, btSkipFolder_.Get())) { AddSkipFolder(); return; }
         if (Same(sender, btReset_.Get())) {
             engine_->stats.ResetCounters();
             engine_->SaveStats();
@@ -1266,7 +1367,10 @@ public:
         ToControls(engine_->cfg);
         RefreshBitPerfect();
         RefreshStats();
+        RefreshChain(true);
         RefreshAbout();
+        if (pendingTab >= 0) ShowTab(pendingTab);
+        pendingTab = -1;
         return form_->GetHandle();
     }
 
@@ -1280,6 +1384,11 @@ public:
         edExtra_.Reset(); lbVmStatus_.Reset(); memo_.Reset(); btRefresh_.Reset(); btReset_.Reset(); btTest_.Reset();
         cbUpdate_.Reset(); cbAutoInstall_.Reset(); coInterval_.Reset(); btCheck_.Reset(); btInstall_.Reset();
         lbUpdate_.Reset(); lnNotes_.Reset(); memoChangelog_.Reset();
+        coMaxRate_.Reset(); cbSkipLossy_.Reset(); edSkip_.Reset(); btSkipFolder_.Reset(); cbBits_.Reset();
+        chainPanel_.reset();
+        outBox_.Reset();
+        chainText_.clear();
+        chainAt_ = 0;
         StopFx(true);
         fxSpot_ = fxPressed_ = -1;
         if (avatarEvents_) {  // AIMP may keep its reference a little longer: no calls into this page any more
@@ -1295,7 +1404,9 @@ public:
         pages_.Reset();
         containers_.clear();
         lastStats_.clear();
-        if (form_) form_->Destroy(0);
+        // Postponed: AIMP 4 frees its own part of the page right after this call; an immediate destroy made it free
+        // memory twice ("Invalid pointer operation" when closing the preferences, which then could not be opened again)
+        if (form_) form_->Destroy(1);
         form_.Reset();
         events_.Reset();
         ui_.Reset();

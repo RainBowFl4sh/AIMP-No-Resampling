@@ -13,6 +13,7 @@
 #include "AimpUtil.h"
 #include "Hardware.h"
 #include "RateController.h"
+#include "Rules.h"
 #include "Updater.h"
 #include "apiFileManager.h"
 #include "apiMessages.h"
@@ -42,7 +43,8 @@ struct Job {
     tstring file;
     Ptr<IAIMPPlaylistItem> item;
     unsigned gen = 0;
-    bool selfRestart = false;  // playback restarted by the plugin itself (not counted)
+    bool selfRestart = false;   // playback restarted by the plugin itself (not counted)
+    bool outputChange = false;  // checked again because an output changed (B5)
 };
 
 class Engine {
@@ -56,6 +58,8 @@ public:
     AimpOutputSync aimpSync;   // main thread only
     BitPerfect bitPerfect;     // main thread only
     std::function<void()> onStatsChanged;  // main thread; refreshes the settings page
+    std::function<void()> onEnabledChanged;  // main thread; the plugin was switched on or off (menu, page)
+    std::function<void()> beforeRestart;     // main thread, AIMP is about to restart: remember the open windows
 
 private:
     std::thread worker_;
@@ -83,6 +87,22 @@ private:
     tstring handledFile_;          // main thread only: file of the last track the plugin looked at
     Config shutdownCfg_;
 
+    // ---- B5: outputs that change while a track plays (main thread unless noted)
+    tstring lastOutput_;           // AIMP's output when the current track was handled
+    uint32_t lastAimpRate_ = 0;    // AIMP's own output rate (AIMPSoundOut\DeviceFreq) at that time
+    int outputRechecks_ = 0;       // checks of the current track because of a change (at most 3 per track)
+    bool pendingOutputChange_ = false;
+    bool handledSkipped_ = false;  // the current track is a stream or an exception: nothing to check again
+    std::atomic<bool> applying_{false};     // worker is switching right now
+    std::atomic<int64_t> lastApplyEnd_{0};  // NowMs() when the worker last switched something
+    std::atomic<int64_t> winChangedAt_{0};  // Windows: last change of a device (DeviceWatcher, another thread)
+    std::atomic<int> winWhat_{0};
+    std::atomic<int> vmChanged_{0};         // worker: Voicemeeter's A1-A5 devices or engine rate changed
+    // worker only: the Voicemeeter state after the last switch, compared every 2 s while AIMP plays into it
+    bool vmWatch_ = false;
+    tstring vmBuses_;
+    uint32_t vmRate_ = 0;
+
     void OnMain(std::function<void()> f, bool wait) {
         if (quit_) return;  // Finalize waits on the main thread -> do not block
         Ptr<IAIMPTask> t;
@@ -92,6 +112,8 @@ private:
         threads->ExecuteInMainThread(t.Get(), wait ? AIMP_SERVICE_THREADS_FLAGS_WAITFOR : 0);
     }
 
+public:
+    // AIMP's current output (AIMP 4: from its settings); main thread
     tstring AimpOutput() {
         Ptr<IAIMPPropertyList> pl;
         if (Failed(player->QueryInterface(IID_IAIMPPropertyList, pl.OutV())) || !pl) return tstring();
@@ -101,6 +123,7 @@ private:
         return FromString(s.Get());
     }
 
+private:
     // Prepares the restart with a new output rate (main thread): resume file, helper process and,
     // in seamless mode, waits until the still image is on screen. AIMP itself is closed
     // asynchronously afterwards (see Handle). false = not possible.
@@ -129,6 +152,7 @@ private:
             CloseHandle(ready);
         }
         patchesHandedOver_ = true;
+        if (beforeRestart) beforeRestart();
         Log(hz ? AR_T("Restarting AIMP with ") + Khz(hz) + AR_T(" (") + aimpSync.rateKey + AR_T(")")
                : tstring(AR_T("Restarting AIMP to apply the bit-perfect mode")));
         return true;
@@ -140,6 +164,11 @@ private:
 
     void Handle(Job& j, RateController& rc) {
         waitForVm_ = false;
+        vmWatch_ = false;
+        if (j.outputChange) {
+            lastFile_.clear();  // the situation changed: switching again is not "without effect"
+            rc.ResyncVoicemeeter();
+        }
         if (!sessionLoaded_) {
             // After a restart by the plugin: take over the original rates of the previous AIMP process
             sessionLoaded_ = true;
@@ -151,7 +180,7 @@ private:
 
         // Which rate does AIMP itself play with? (AIMPSoundOut\DeviceFreq)
         uint32_t aimpRate = 0;
-        OnMain([this, &aimpRate] { aimpRate = aimpSync.AimpRate(); }, true);
+        OnMain([this, &aimpRate] { lastAimpRate_ = aimpRate = aimpSync.AimpRate(); }, true);
 
         // ASIO / WASAPI exclusive / DirectSound: AIMP only follows the track if it is restarted.
         // Without the (experimental) restart option the plugin does not follow the track there; it
@@ -201,6 +230,20 @@ private:
         t.rate = aimpRate;
 #endif
 
+        // Highest rate (General tab): 192 -> 96, 176.4 -> 88.2 kHz etc.; AIMP resamples the track then.
+        // Only where the plugin follows the track: AIMP's own fixed rate (exclusive / ASIO without the
+        // restart option, Linux) is AIMP's setting, and the devices behind AIMP must keep running at it.
+#ifdef _WIN32
+        bool followsTrack = !passive;
+#else
+        bool followsTrack = false;
+#endif
+        uint32_t unlimited = t.rate, limited = followsTrack ? LimitRate(t.rate, j.cfg.maxRate) : t.rate;
+        if (limited != t.rate) {
+            note += tstring(note.empty() ? AR_T("") : AR_T("; ")) + AR_T("limited to ") + Khz(limited) + AR_T(" (highest rate setting)");
+            t.rate = limited;
+        }
+
         Decision d = rc.Prepare(t);
 #ifdef _WIN32
         if (passive && !d.vm) d.apply = d.stopPlayback = false;  // nothing to keep in sync
@@ -210,6 +253,10 @@ private:
         }
 #endif
         tstring vmText = rc.VoicemeeterStatus();
+        bool vmChain = false;
+#ifdef _WIN32
+        vmChain = d.vm;
+#endif
         stats.Update([&](Stats& s) {
             s.modeText = ModeName(d.mode);
             if (j.cfg.mode == OutputMode::Auto) s.modeText = tstring(AR_T("Automatic -> ")) + s.modeText;
@@ -218,6 +265,16 @@ private:
             s.deviceRate = d.currentRate;
             s.aimpRate = aimpRate;
             s.note = note;
+            s.mode = (int)d.mode;
+            s.trackFile = j.file;
+            s.endDevice = d.endName;
+            s.endDeviceId = d.endId;
+            s.aimpDevice = d.aimpName;
+            s.aimpDeviceId = d.aimpId;
+            s.limitedTo = limited != unlimited ? limited : 0;
+            s.exception.clear();
+            s.vmChain = vmChain;
+            s.vmEngineRate = 0;
             s.hardwareText = hw.Describe() + AR_T(" -> ") + hw.SpeedName() + AR_T(" profile, ") + Num(tm.settleMs) +
                              AR_T(" ms settle time");
         });
@@ -246,11 +303,13 @@ private:
                 if (!j.selfRestart) s.skipped++;
                 if (!s.deviceRate) s.deviceRate = d.rate;
             });
+            WatchVoicemeeter(d);
             return;
         }
         if (!aimpNeeds && j.file == lastFile_ && d.rate == lastRate_ && NowMs() - lastTime_ < 15000) {
             Log(AR_T("Switching to ") + Khz(d.rate) + AR_T(" has no effect - skipped for this track"));
             stats.Update([](Stats& s) { s.failures++; });
+            WatchVoicemeeter(d);  // e.g. a device on A1 that keeps its format: Voicemeeter itself is still watched
             return;
         }
         if (gen_ != j.gen) return;  // another track is playing meanwhile
@@ -272,7 +331,10 @@ private:
                 return;
             }
         }
+        applying_ = true;
         uint32_t result = devApply ? rc.Apply(d) : d.rate;
+        lastApplyEnd_ = NowMs();
+        applying_ = false;
         int64_t dt = NowMs() - t0;
         lastFile_ = j.file;
         lastRate_ = d.rate;
@@ -290,6 +352,7 @@ private:
             if (d.vm && devApply && d.vmEngine) s.vmRestarts++;
 #endif
         });
+        WatchVoicemeeter(d);
         if (quit_ || gen_ != j.gen) return;
 
         if (aimpNeeds) {
@@ -321,6 +384,39 @@ private:
         }
     }
 
+    // Worker: remembers Voicemeeter's devices and engine rate after a switch, to notice when they change (B5)
+    void WatchVoicemeeter(const Decision& d) {
+#ifdef _WIN32
+        vmWatch_ = d.vm;
+        if (!d.vm) return;
+        auto& vm = win::Voicemeeter::Get();
+        vmBuses_.clear();
+        for (auto& b : vm.BusDevices(true)) vmBuses_ += Num(b.first) + AR_T("=") + b.second + AR_T(";");
+        vmRate_ = d.vmEngine ? d.rate : 0;  // what the plugin set (Voicemeeter may report the old value for a moment)
+        uint32_t eng = vm.EngineRate();
+        stats.Update([&](Stats& s) { s.vmEngineRate = eng; });
+#else
+        (void)d;
+#endif
+    }
+
+    // Worker, every 2 s while AIMP plays into Voicemeeter: did someone change A1-A5 or the engine rate?
+    void CheckVoicemeeterChanged() {
+#ifdef _WIN32
+        auto& vm = win::Voicemeeter::Get();
+        if (!vm.Running()) return;  // closed: handled when it comes back (waitForVm_) or with the next track
+        tstring buses;
+        for (auto& b : vm.BusDevices(true)) buses += Num(b.first) + AR_T("=") + b.second + AR_T(";");
+        uint32_t sr = vmRate_ ? vm.PreferredRate() : 0;
+        if (buses == vmBuses_ && sr == vmRate_) return;
+        tstring what = buses != vmBuses_ ? tstring(AR_T("Voicemeeter output device")) : AR_T("Voicemeeter engine rate ") + Khz(sr);
+        vmBuses_ = buses;
+        vmRate_ = sr;
+        vmWatch_ = false;  // until the check is done
+        OnMain([this, what] { OutputChanged(what); }, false);
+#endif
+    }
+
     // Worker: Voicemeeter was not running for the current track - has it been started meanwhile?
     void CheckVoicemeeterStarted() {
 #ifdef _WIN32
@@ -338,15 +434,20 @@ private:
         HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 #endif
         RateController rc;
+#ifdef _WIN32
+        win::DeviceWatcher watcher(&winChangedAt_, &winWhat_);
+        if (!watcher.Start()) Log(AR_T("Windows does not report device changes - only AIMP's own output is watched"));
+#endif
         for (;;) {
             Job j;
             {
                 std::unique_lock<std::mutex> l(m_);
                 auto ready = [&] { return quit_ || has_; };
-                if (!waitForVm_) cv_.wait(l, ready);
-                else if (!cv_.wait_for(l, std::chrono::seconds(3), ready)) {
+                if (!waitForVm_ && !vmWatch_) cv_.wait(l, ready);
+                else if (!cv_.wait_for(l, std::chrono::seconds(waitForVm_ ? 3 : 2), ready)) {
                     l.unlock();
-                    CheckVoicemeeterStarted();
+                    if (waitForVm_) CheckVoicemeeterStarted();
+                    else CheckVoicemeeterChanged();
                     continue;
                 }
                 if (quit_) break;
@@ -359,10 +460,18 @@ private:
         }
         rc.SetConfig(shutdownCfg_, Timing::For(hw, shutdownCfg_.autoTiming, shutdownCfg_.settleMs));
         // The main thread waits in Stop() meanwhile, so the settings file can be written from here.
+        // No track was handled since a restart by the plugin (e.g. the plugin was disabled meanwhile, or the
+        // bit-perfect restart came from disabling it): the original rates of the previous AIMP are still in
+        // the settings file - take them over now, so they are restored (or handed on to the next restart).
+        if (!sessionLoaded_) {
+            sessionLoaded_ = true;
+            rc.LoadSession(aimpSync.resume.time != 0);
+        }
         // Closed by the plugin for a new rate: keep the devices at that rate, remember the originals.
         if (selfRestart_) rc.SaveSession();
         else rc.Shutdown();
 #ifdef _WIN32
+        watcher.Stop();
         win::Voicemeeter::Get().Shutdown();
         if (SUCCEEDED(co)) CoUninitialize();
 #endif
@@ -580,10 +689,14 @@ public:
         OnStreamStart();
     }
 
-    // Main thread: checks the playing track again (e.g. after the plugin was enabled)
+    // Main thread: checks the playing track again (e.g. after the plugin was enabled). Anything may have changed
+    // meanwhile (e.g. Voicemeeter's engine rate while the plugin was off): compared like after an output change.
     void Recheck() {
         handledFile_.clear();
-        if (player && player->GetState() == AIMP_PLAYER_STATE_PLAYING) OnStreamStart();
+        if (!player || player->GetState() != AIMP_PLAYER_STATE_PLAYING) return;
+        pendingOutputChange_ = true;
+        OnStreamStart();
+        pendingOutputChange_ = false;
     }
 
     tstring CurrentFile() {
@@ -651,9 +764,16 @@ public:
         if (Succeeded(info->GetValueAsObject(AIMP_FILEINFO_PROPID_FILENAME, IID_IAIMPString, s.OutV())) && s)
             j.file = FromString(s.Get());
         j.track.aimpOutput = AimpOutput();
+        j.track.lossy = IsLossy(j.track.codec, j.file);
+        bool recheck = !restartFile_.empty() && restartFile_ == j.file;  // the plugin checks the same track again
+        if (j.file != handledFile_ && !recheck) outputRechecks_ = 0;  // a new track
+        lastOutput_ = j.track.aimpOutput;
+        j.outputChange = pendingOutputChange_;
+        pendingOutputChange_ = false;
         if (IsStream(j.file)) {
-            bool same = j.file == handledFile_;  // e.g. playback paused and continued
+            bool same = j.file == handledFile_ || recheck;  // e.g. playback paused and continued
             handledFile_ = j.file;
+            handledSkipped_ = true;
             restartFile_.clear();
             ++gen_;  // a job for the track before is not switched any more
             stats.Update([&](Stats& st) {
@@ -674,8 +794,43 @@ public:
             if (onStatsChanged) onStatsChanged();
             return;
         }
-        handledFile_ = j.file;
         player->GetPlaylistItem(j.item.Out());
+        // Exceptions (General tab): lossy formats, folders and playlists - the output stays as it is
+        tstring why;
+        if (cfg.skipLossy && j.track.lossy) why = AR_T("lossy format");
+        else {
+            tstring entry = MatchSkipList(cfg.skipList, j.file, PlaylistName(j.item.Get()));
+            if (!entry.empty()) why = AR_T("exception list (") + entry + AR_T(")");
+        }
+        if (!why.empty()) {
+            bool same = j.file == handledFile_ || recheck;
+            handledFile_ = j.file;
+            handledSkipped_ = true;
+            restartFile_.clear();
+            ++gen_;
+            stats.Update([&](Stats& st) {
+                if (!same) {
+                    st.tracks++;
+                    st.skipped++;
+                    st.rates[j.track.rate]++;
+                }
+                st.trackRate = j.track.rate;
+                st.trackBits = j.track.bits;
+                st.trackChannels = j.track.channels;
+                st.trackCodec = j.track.codec;
+                st.aimpOutput = j.track.aimpOutput;
+                st.trackFile = j.file;
+                st.exception = why;
+                st.note = AR_T("not switched: ") + why;
+            });
+            if (!same)
+                Log(AR_T("Track ") + Khz(j.track.rate) + (j.track.codec.empty() ? tstring() : AR_T(" | ") + j.track.codec) +
+                    AR_T(" | not switched: ") + why);
+            if (onStatsChanged) onStatsChanged();
+            return;
+        }
+        handledFile_ = j.file;
+        handledSkipped_ = false;
         j.cfg = cfg;
         j.gen = ++gen_;
         j.selfRestart = !restartFile_.empty() && restartFile_ == j.file;
@@ -690,11 +845,81 @@ public:
             st.trackChannels = j.track.channels;
             st.trackCodec = j.track.codec;
             st.aimpOutput = j.track.aimpOutput;
+            st.trackFile = j.file;
+            st.exception.clear();
         });
         std::lock_guard<std::mutex> l(m_);
         job_ = std::move(j);  // drop an older job that was not handled yet
         has_ = true;
         cv_.notify_one();
+    }
+
+    // Main thread: the playlist the item plays from ("" if none)
+    static tstring PlaylistName(IAIMPPlaylistItem* item) {
+        if (!item) return tstring();
+        Ptr<IAIMPPlaylist> pl;
+        Ptr<IAIMPPropertyList> props;
+        Ptr<IAIMPString> s;
+        if (Failed(item->GetValueAsObject(AIMP_PLAYLISTITEM_PROPID_PLAYLIST, IID_IAIMPPlaylist, pl.OutV())) || !pl ||
+            Failed(pl->QueryInterface(IID_IAIMPPropertyList, props.OutV())) || !props ||
+            Failed(props->GetValueAsObject(AIMP_PLAYLIST_PROPID_NAME, IID_IAIMPString, s.OutV())) || !s)
+            return tstring();
+        return FromString(s.Get());
+    }
+
+    // ---- B5: an output changed while a track plays (main thread)
+
+    // Once a second while AIMP plays (AIMP_MSG_EVENT_PLAYER_UPDATE_POSITION): AIMP's output or its own rate,
+    // Windows' devices (reported by DeviceWatcher) - something new is checked like a new track
+    void Tick() {
+        if (!cfg.enabled || !player || player->GetState() != AIMP_PLAYER_STATE_PLAYING) return;
+        if (handledFile_.empty() || handledSkipped_ || CurrentFile() != handledFile_) return;  // not handled (yet)
+        tstring out = AimpOutput();
+        if (!lastOutput_.empty() && !out.empty() && out != lastOutput_) {
+            OutputChanged(AR_T("AIMP output ") + out);
+            return;
+        }
+        uint32_t live = aimpSync.LiveAimpRate();
+        if (lastAimpRate_ && live && live != lastAimpRate_) {
+            lastAimpRate_ = live;
+            OutputChanged(AR_T("AIMP's output rate ") + Khz(live));
+            return;
+        }
+        // Windows reports one change several times: wait until it is quiet for 0.7 s. Changes the plugin
+        // made itself (while switching and up to 3 s after it) are not counted.
+        int64_t at = winChangedAt_;
+        if (!at || applying_ || NowMs() - at < 700) return;
+        winChangedAt_ = 0;
+        if (at - lastApplyEnd_ < 3000) return;
+        int what = winWhat_;
+        OutputChanged(what == 1 ? AR_T("Windows default device") : what == 2 ? AR_T("Windows default format")
+                                                                           : AR_T("Windows audio device added or removed"));
+    }
+
+    // Checks the playing track again because an output changed (at most 3 times per track: a device that
+    // keeps changing its format by itself must not start an endless loop)
+    void OutputChanged(const tstring& what) {
+        if (!cfg.enabled || !player || player->GetState() != AIMP_PLAYER_STATE_PLAYING) return;
+        if (outputRechecks_ >= 3) {
+            if (outputRechecks_++ == 3) Log(AR_T("Output changed again (") + what + AR_T(") - not checked again for this track"));
+            return;
+        }
+        outputRechecks_++;
+        Log(AR_T("Output changed (") + what + AR_T(") - checking the current track again"));
+        pendingOutputChange_ = true;
+        RecheckSamePlayback();
+        pendingOutputChange_ = false;  // not playing: nothing was queued
+    }
+
+    // ---- F1: switches the plugin on or off (menu, hotkey, settings page); main thread
+    void SetEnabled(bool on, const TChar* how) {
+        if (cfg.enabled == on) return;
+        cfg.enabled = on;
+        cfg.Save();
+        bitPerfect.Apply(cfg);
+        Log(tstring(on ? AR_T("Plugin enabled") : AR_T("Plugin disabled")) + (how ? AR_T(" (") + tstring(how) + AR_T(")") : tstring()));
+        if (on) Recheck();  // switch to the rate of the track that is playing now
+        if (onEnabledChanged) onEnabledChanged();
     }
 
     // ---- Counters are kept in the settings file, section [Statistics] (main thread)

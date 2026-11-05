@@ -1,0 +1,1350 @@
+# Translations of the plugin's texts, built into the plugin gzip-compressed (CMakeLists.txt, src/Lang.h).
+# One block per text, blocks separated by an empty line: English (the key, exactly the text used in the
+# code), German, Russian, Ukrainian. UTF-8; %1, %2 ... are placeholders; \n is a line break.
+# The texts must fit the fixed layout of the settings page - the mock host test checks every language.
+# Lines starting with # are comments.
+
+# --- tabs
+General
+Allgemein
+Общие
+Загальні
+
+Output
+Ausgabe
+Вывод
+Вихід
+
+ASIO / Exclusive
+ASIO / Exklusiv
+ASIO / Эксклюзив
+ASIO / Ексклюзив
+
+Voicemeeter
+Voicemeeter
+Voicemeeter
+Voicemeeter
+
+Advanced
+Erweitert
+Расширенные
+Розширені
+
+About
+Über
+Инфо
+Інфо
+
+# --- General
+Switches your audio output to the sample rate of each track, so nothing gets resampled (bit-perfect playback).
+Stellt die Audioausgabe auf die Abtastrate jedes Titels um, damit nichts umgerechnet wird (bitgenaue Wiedergabe).
+Переключает аудиовыход на частоту дискретизации каждого трека, чтобы ничего не передискретизировалось (bit-perfect).
+Перемикає аудіовихід на частоту дискретизації кожного треку, щоб нічого не передискретизувалося (bit-perfect).
+
+Warning: only use this plugin while you are listening to music and nothing else. It changes the sample rate of your audio devices (and Voicemeeter) with every track. If other applications play sound at the same time (games, videos, calls), disable the plugin and let Windows/AIMP resample instead.
+Achtung: Nutze das Plugin nur, wenn du ausschließlich Musik hörst. Es ändert bei jedem Titel die Abtastrate deiner Audiogeräte (und von Voicemeeter). Spielen andere Programme gleichzeitig Ton ab (Spiele, Videos, Anrufe), deaktiviere das Plugin und lass Windows/AIMP umrechnen.
+Внимание: используйте плагин, только когда слушаете музыку и ничего больше. Он меняет частоту ваших аудиоустройств (и Voicemeeter) с каждым треком. Если другие программы одновременно воспроизводят звук (игры, видео, звонки), отключите плагин.
+Увага: використовуйте плагін, лише коли слухаєте музику й нічого більше. Він змінює частоту ваших аудіопристроїв (і Voicemeeter) з кожним треком. Якщо інші програми одночасно відтворюють звук (ігри, відео, дзвінки), вимкніть плагін.
+
+Warning: only use this plugin while you are listening to music and nothing else. It changes the sample rate of your audio devices with every track. If other applications play sound at the same time (games, videos, calls), disable the plugin and let Windows/AIMP resample instead.
+Achtung: Nutze das Plugin nur, wenn du ausschließlich Musik hörst. Es ändert bei jedem Titel die Abtastrate deiner Audiogeräte. Spielen andere Programme gleichzeitig Ton ab (Spiele, Videos, Anrufe), deaktiviere das Plugin und lass Windows/AIMP umrechnen.
+Внимание: используйте плагин, только когда слушаете музыку и ничего больше. Он меняет частоту ваших аудиоустройств с каждым треком. Если другие программы одновременно воспроизводят звук (игры, видео, звонки), отключите плагин.
+Увага: використовуйте плагін, лише коли слухаєте музику й нічого більше. Він змінює частоту ваших аудіопристроїв з кожним треком. Якщо інші програми одночасно відтворюють звук (ігри, відео, дзвінки), вимкніть плагін.
+
+Enable Prevent Resampling
+Prevent Resampling aktivieren
+Включить Prevent Resampling
+Увімкнути Prevent Resampling
+
+Fall back to integer multiples if needed (44.1 → 88.2 kHz)
+Bei Bedarf ganzzahlige Vielfache nutzen (44,1 → 88,2 kHz)
+При необходимости использовать кратные частоты (44,1 → 88,2 кГц)
+За потреби використовувати кратні частоти (44,1 → 88,2 кГц)
+
+Restore the original sample rates when AIMP closes
+Ursprüngliche Abtastraten beim Beenden von AIMP wiederherstellen
+Восстанавливать исходные частоты при закрытии AIMP
+Відновлювати початкові частоти при закритті AIMP
+
+Automatic timing based on your hardware
+Automatisches Timing passend zur Hardware
+Автоматические задержки по вашему оборудованию
+Автоматичні затримки за вашим обладнанням
+
+%1 threads
+%1 Threads
+потоков: %1
+потоків: %1
+
+Detected: %1 → %2 profile (%3 ms after each switch).
+Erkannt: %1 → Profil „%2“ (%3 ms nach jedem Umschalten).
+Найдено: %1 → профиль «%2», пауза %3 мс.
+Виявлено: %1 → профіль «%2», пауза %3 мс.
+
+fast
+schnell
+быстрый
+швидкий
+
+normal
+normal
+обычный
+звичайний
+
+conservative
+vorsichtig
+осторожный
+обережний
+
+Settle time without automatic timing (ms):
+Wartezeit ohne automatisches Timing (ms):
+Пауза без автоматических задержек (мс):
+Пауза без автоматичних затримок (мс):
+
+Open folder
+Ordner öffnen
+Открыть папку
+Відкрити теку
+
+# --- Output
+AIMP output device:
+AIMP-Ausgabegerät:
+Устройство вывода AIMP:
+Пристрій виведення AIMP:
+
+Same setting as AIMP → Playback → Output. Only changed if you pick another device here.
+Dieselbe Einstellung wie in AIMP → Wiedergabe → Ausgabe. Sie wird nur geändert, wenn du hier ein anderes Gerät wählst.
+Та же настройка, что и AIMP → Воспроизведение → Вывод. Меняется, только если выбрать здесь другое устройство.
+Те саме налаштування, що й AIMP → Відтворення → Виведення. Змінюється, лише якщо вибрати тут інший пристрій.
+
+Output type:
+Ausgabeart:
+Тип вывода:
+Тип виведення:
+
+Automatic (from AIMP's output device)
+Automatisch (vom AIMP-Ausgabegerät)
+Автоматически (по выводу AIMP)
+Автоматично (за виведенням AIMP)
+
+WASAPI shared
+WASAPI geteilt
+WASAPI общий
+WASAPI спільний
+
+WASAPI exclusive (event / push)
+WASAPI exklusiv (Event / Push)
+WASAPI монопольный (event / push)
+WASAPI монопольний (event / push)
+
+Windows device:
+Windows-Gerät:
+Устройство Windows:
+Пристрій Windows:
+
+Automatic (from AIMP's output)
+Automatisch (von AIMPs Ausgabe)
+Автоматически (по выводу AIMP)
+Автоматично (за виведенням AIMP)
+
+Used for WASAPI shared and DirectSound. Automatic = the device of AIMP's output, otherwise the Windows default device.
+Für WASAPI geteilt und DirectSound. Automatisch = das Gerät von AIMPs Ausgabe, sonst das Windows-Standardgerät.
+Для WASAPI общего и DirectSound. Автоматически = устройство вывода AIMP, иначе устройство Windows по умолчанию.
+Для WASAPI спільного і DirectSound. Автоматично = пристрій виведення AIMP, інакше типовий пристрій Windows.
+
+Additional devices to switch:
+Weitere Geräte umschalten:
+Дополнительные устройства:
+Додаткові пристрої:
+
+Parts of device names, separated by ';' (e.g. FiiO; Realtek Digital).
+Teile von Gerätenamen, getrennt durch ';' (z. B. FiiO; Realtek Digital).
+Части имён устройств через ';' (например, FiiO; Realtek Digital).
+Частини назв пристроїв через ';' (наприклад, FiiO; Realtek Digital).
+
+AIMP for Linux resamples every track to its own rate (Sound Output -> Parameters). PipeWire is set to that rate ('pw-metadata clock.force-rate'), so nothing is resampled a second time. Following each track needs an AIMP restart - planned for a later version.
+AIMP für Linux rechnet jeden Titel auf seine eigene Rate um (Tonausgabe -> Parameter). PipeWire wird auf diese Rate gestellt ('pw-metadata clock.force-rate'), damit nicht ein zweites Mal umgerechnet wird. Jedem Titel zu folgen braucht einen AIMP-Neustart - für später geplant.
+AIMP для Linux пересчитывает каждый трек в свою частоту (Вывод звука -> Параметры). PipeWire ставится на ту же частоту ('pw-metadata clock.force-rate'), поэтому второго пересчёта нет. Следование за треком требует перезапуска AIMP - запланировано.
+AIMP для Linux перераховує кожен трек у свою частоту (Виведення звуку -> Параметри). PipeWire ставиться на ту саму частоту ('pw-metadata clock.force-rate'), тому другого перерахунку немає. Слідування за треком потребує перезапуску AIMP - заплановано.
+
+Bit-perfect mode (switch off AIMP's sound processing)
+Bitgenau-Modus (AIMPs Klangbearbeitung abschalten)
+Режим bit-perfect (отключить обработку звука AIMP)
+Режим bit-perfect (вимкнути обробку звуку AIMP)
+
+Turns off crossfade, equalizer, effects and ReplayGain. Unticking brings your old settings back.
+Schaltet Überblendung, Equalizer, Effekte und ReplayGain ab. Haken raus holt die alten Einstellungen zurück.
+Отключает кроссфейд, эквалайзер, эффекты и ReplayGain. Снятие флажка вернёт прежние настройки.
+Вимикає кросфейд, еквалайзер, ефекти та ReplayGain. Зняття позначки поверне попередні налаштування.
+
+Set AIMP's volume to 100 %
+AIMP-Lautstärke auf 100 % stellen
+Громкость AIMP на 100 %
+Гучність AIMP на 100 %
+
+No gapless playback (short pause between tracks)
+Kein Gapless (kurze Pause zwischen Titeln)
+Без gapless (короткая пауза между треками)
+Без gapless (коротка пауза між треками)
+
+Restart AIMP now
+AIMP neu starten
+Перезапустить AIMP
+Перезапустити AIMP
+
+Changed when AIMP restarts: %1.
+Wird beim AIMP-Neustart geändert: %1.
+Изменится при перезапуске AIMP: %1.
+Зміниться під час перезапуску AIMP: %1.
+
+Only works while Prevent Resampling is enabled (General tab).
+Wirkt nur, solange Prevent Resampling aktiviert ist (Reiter Allgemein).
+Работает, только когда Prevent Resampling включён (вкладка «Общие»).
+Працює, лише коли Prevent Resampling увімкнено (вкладка «Загальні»).
+
+Please switch off in AIMP's sound effects: %1.
+Bitte in AIMPs Klangeffekten abschalten: %1.
+Отключите в звуковых эффектах AIMP: %1.
+Вимкніть у звукових ефектах AIMP: %1.
+
+ReplayGain
+ReplayGain
+ReplayGain
+ReplayGain
+
+peak normalization
+Spitzen-Normalisierung
+пиковая нормализация
+пікова нормалізація
+
+loudness compensation
+Loudness-Korrektur
+тонкомпенсация
+тонкомпенсація
+
+voice remover
+Stimmentferner
+удаление голоса
+видалення голосу
+
+Voicemeeter: for 100 % bit-perfect output, do not use its equalizer or other effects on the bus and keep the fader at 0 dB.
+Voicemeeter: Für 100 % bitgenaue Ausgabe dort keinen Equalizer und keine anderen Effekte auf dem Bus nutzen und den Fader auf 0 dB lassen.
+Voicemeeter: для 100 % bit-perfect не используйте его эквалайзер и другие эффекты на шине, фейдер держите на 0 дБ.
+Voicemeeter: для 100 % bit-perfect не використовуйте його еквалайзер та інші ефекти на шині, фейдер тримайте на 0 дБ.
+
+Automatic (PipeWire if available)
+Automatisch (PipeWire bevorzugt)
+Автоматически (PipeWire, если есть)
+Автоматично (PipeWire, якщо є)
+
+PipeWire (clock.force-rate)
+PipeWire (clock.force-rate)
+PipeWire (clock.force-rate)
+PipeWire (clock.force-rate)
+
+ALSA direct (nothing to switch)
+ALSA direkt (nichts umzuschalten)
+ALSA напрямую (нечего переключать)
+ALSA напряму (нічого перемикати)
+
+# --- ASIO / Exclusive
+EXPERIMENTAL – please read before enabling
+EXPERIMENTELL – bitte vor dem Einschalten lesen
+ЭКСПЕРИМЕНТАЛЬНО – прочитайте перед включением
+ЕКСПЕРИМЕНТАЛЬНО – прочитайте перед увімкненням
+
+With ASIO, WASAPI exclusive (event/push) and DirectSound, AIMP plays with its own fixed rate (Preferences → Sound Output) and reads it only at start-up. The only way to follow the track is a workaround: stop playback, close AIMP, write the new rate into AIMP.ini, start AIMP again and continue at the same position.
+Mit ASIO, WASAPI exklusiv (Event/Push) und DirectSound spielt AIMP mit einer festen Rate (Einstellungen → Tonausgabe), die es nur beim Start liest. Folgen geht nur über einen Umweg: Wiedergabe stoppen, AIMP schließen, neue Rate in AIMP.ini schreiben, AIMP starten und an derselben Stelle weiterspielen.
+С ASIO, WASAPI монопольным (event/push) и DirectSound AIMP играет со своей фиксированной частотой (Настройки → Вывод звука) и читает её только при запуске. Обходной путь: остановить, закрыть AIMP, записать частоту в AIMP.ini, запустить AIMP и продолжить с того же места.
+З ASIO, WASAPI монопольним (event/push) і DirectSound AIMP грає зі своєю фіксованою частотою (Налаштування → Виведення звуку) і читає її лише під час запуску. Обхідний шлях: зупинити, закрити AIMP, записати частоту в AIMP.ini, запустити AIMP і продовжити з того самого місця.
+
+Expect a short interruption on every rate change. In rare cases AIMP may not come back by itself or settings may be lost – keep a backup of AIMP.ini. Use at your own risk.
+Bei jedem Ratenwechsel gibt es eine kurze Unterbrechung. Selten startet AIMP nicht von selbst neu oder Einstellungen gehen verloren – sichere AIMP.ini. Nutzung auf eigene Gefahr.
+Каждая смена частоты даёт короткий перерыв. Изредка AIMP может не запуститься сам или настройки потеряются – сохраните копию AIMP.ini. На свой риск.
+Кожна зміна частоти дає коротку перерву. Зрідка AIMP може не запуститися сам або налаштування втратяться – збережіть копію AIMP.ini. На власний ризик.
+
+Restart AIMP to apply the track's sample rate
+AIMP neu starten, um die Rate des Titels zu übernehmen
+Перезапускать AIMP для частоты трека
+Перезапускати AIMP для частоти треку
+
+Seamless restart (show a still image of AIMP meanwhile)
+Nahtloser Neustart (solange ein Standbild von AIMP zeigen)
+Плавный перезапуск (пока показывать снимок AIMP)
+Плавний перезапуск (поки показувати знімок AIMP)
+
+While this is off, the plugin does not follow the track on these outputs; it only keeps Voicemeeter at AIMP's own rate. WASAPI shared never needs a restart.
+Solange das aus ist, folgt das Plugin dem Titel auf diesen Ausgaben nicht; es hält nur Voicemeeter auf AIMPs eigener Rate. WASAPI geteilt braucht nie einen Neustart.
+Пока это выключено, плагин не следует за треком на этих выходах; он только держит Voicemeeter на частоте AIMP. WASAPI общий никогда не требует перезапуска.
+Поки це вимкнено, плагін не слідує за треком на цих виходах; він лише тримає Voicemeeter на частоті AIMP. WASAPI спільний ніколи не потребує перезапуску.
+
+ASIO driver:
+ASIO-Treiber:
+Драйвер ASIO:
+Драйвер ASIO:
+
+Set the ASIO driver's rate directly (only if AIMP does not)
+Rate des ASIO-Treibers direkt setzen (nur falls AIMP es nicht tut)
+Задавать частоту драйвера ASIO напрямую (если AIMP не задаёт)
+Задавати частоту драйвера ASIO напряму (якщо AIMP не задає)
+
+# --- Voicemeeter
+Only relevant if you use Voicemeeter (VB-Audio). Voicemeeter exists for Windows only, so this tab has no function on Linux.
+Nur wichtig, wenn du Voicemeeter (VB-Audio) nutzt. Voicemeeter gibt es nur für Windows, unter Linux hat dieser Tab keine Funktion.
+Нужно, только если вы используете Voicemeeter (VB-Audio). Voicemeeter есть только для Windows, в Linux вкладка не работает.
+Потрібно, лише якщо ви використовуєте Voicemeeter (VB-Audio). Voicemeeter є лише для Windows, у Linux вкладка не працює.
+
+Linux detected – this tab is disabled. Voicemeeter (VB-Audio) exists for Windows only; on Linux the plugin switches PipeWire directly (Output tab). Linux mixers such as Pulsemeeter may be supported in a later version.
+Linux erkannt – dieser Tab ist deaktiviert. Voicemeeter (VB-Audio) gibt es nur für Windows; unter Linux schaltet das Plugin PipeWire direkt um (Tab Ausgabe). Linux-Mixer wie Pulsemeeter folgen vielleicht später.
+Обнаружен Linux – вкладка отключена. Voicemeeter (VB-Audio) есть только для Windows; в Linux плагин переключает PipeWire напрямую (вкладка Вывод). Микшеры вроде Pulsemeeter, возможно, позже.
+Виявлено Linux – вкладку вимкнено. Voicemeeter (VB-Audio) є лише для Windows; у Linux плагін перемикає PipeWire напряму (вкладка Вихід). Мікшери на кшталт Pulsemeeter, можливо, пізніше.
+
+Voicemeeter: not available on Linux
+Voicemeeter: unter Linux nicht verfügbar
+Voicemeeter: недоступен в Linux
+Voicemeeter: недоступний у Linux
+
+%1 is running
+%1 läuft
+%1 запущен
+%1 запущено
+
+Voicemeeter is installed but not running
+Voicemeeter ist installiert, läuft aber nicht
+Voicemeeter установлен, но не запущен
+Voicemeeter встановлено, але не запущено
+
+engine %1
+Engine %1
+движок %1
+рушій %1
+
+Voicemeeter is not installed – this tab has no effect.
+Voicemeeter ist nicht installiert – dieser Tab hat keine Wirkung.
+Voicemeeter не установлен – вкладка ни на что не влияет.
+Voicemeeter не встановлено – вкладка ні на що не впливає.
+
+Follow Voicemeeter when AIMP plays into one of its virtual devices
+Voicemeeter folgen, wenn AIMP in eines seiner virtuellen Geräte spielt
+Следовать за Voicemeeter, когда AIMP играет в его виртуальное устройство
+Слідувати за Voicemeeter, коли AIMP грає в його віртуальний пристрій
+
+Switch the engine sample rate (Option.sr)
+Abtastrate der Engine umschalten (Option.sr)
+Переключать частоту движка (Option.sr)
+Перемикати частоту рушія (Option.sr)
+
+Switch all hardware outputs A1–A5, not only A1
+Alle Hardware-Ausgänge A1–A5 umschalten, nicht nur A1
+Переключать все выходы A1–A5, а не только A1
+Перемикати всі виходи A1–A5, а не лише A1
+
+ASIO device on A1 follows the engine rate (Option.ASIOsr)
+ASIO-Gerät auf A1 folgt der Engine-Rate (Option.ASIOsr)
+Устройство ASIO на A1 следует частоте движка (Option.ASIOsr)
+Пристрій ASIO на A1 слідує частоті рушія (Option.ASIOsr)
+
+A1 output device:
+Ausgabegerät A1:
+Устройство вывода A1:
+Пристрій виведення A1:
+
+(keep the current device)
+(aktuelles Gerät behalten)
+(оставить текущее устройство)
+(залишити поточний пристрій)
+
+(Voicemeeter is Windows only)
+(Voicemeeter nur für Windows)
+(Voicemeeter только для Windows)
+(Voicemeeter лише для Windows)
+
+not connected
+nicht verbunden
+не подключено
+не під'єднано
+
+Driver type WDM / KS / MME / ASIO. Sent to Voicemeeter when you click Apply; for bit-perfect playback run A1 via ASIO or WDM.
+Treiberart WDM / KS / MME / ASIO. Wird mit Übernehmen an Voicemeeter gesendet; für bitgenaue Wiedergabe A1 über ASIO oder WDM nutzen.
+Тип драйвера WDM / KS / MME / ASIO. Передаётся в Voicemeeter по кнопке «Применить»; для bit-perfect используйте A1 через ASIO или WDM.
+Тип драйвера WDM / KS / MME / ASIO. Передається у Voicemeeter кнопкою «Застосувати»; для bit-perfect використовуйте A1 через ASIO або WDM.
+
+Required: tick “Auto restart audio engine (all devices)” in Voicemeeter's settings. Without it, outputs on WDM (e.g. A2) can turn red after a rate change or when AIMP closes. The Voicemeeter API offers no way to set this option from the plugin.
+Nötig: In Voicemeeters Einstellungen „Auto restart audio engine (all devices)“ ankreuzen. Sonst können WDM-Ausgänge (z. B. A2) nach einem Ratenwechsel oder beim Schließen von AIMP rot werden. Die Voicemeeter-API kann das nicht setzen.
+Обязательно: отметьте «Auto restart audio engine (all devices)» в настройках Voicemeeter. Иначе выходы WDM (напр. A2) могут стать красными после смены частоты или закрытия AIMP. API Voicemeeter не позволяет задать это из плагина.
+Обов'язково: позначте «Auto restart audio engine (all devices)» у налаштуваннях Voicemeeter. Інакше виходи WDM (напр. A2) можуть стати червоними після зміни частоти або закриття AIMP. API Voicemeeter не дає задати це з плагіна.
+
+# --- Advanced
+Language:
+Sprache:
+Язык:
+Мова:
+
+Automatic (AIMP: %1)
+Automatisch (AIMP: %1)
+Автоматически (AIMP: %1)
+Автоматично (AIMP: %1)
+
+Settings file:
+Einstellungsdatei:
+Файл настроек:
+Файл налаштувань:
+
+Export...
+Exportieren...
+Экспорт...
+Експорт...
+
+Import...
+Importieren...
+Импорт...
+Імпорт...
+
+Export settings
+Einstellungen exportieren
+Экспорт настроек
+Експорт налаштувань
+
+Import settings
+Einstellungen importieren
+Импорт настроек
+Імпорт налаштувань
+
+%1 settings
+%1-Einstellungen
+Настройки %1
+Налаштування %1
+
+Settings exported to %1.
+Einstellungen exportiert nach %1.
+Настройки экспортированы в %1.
+Налаштування експортовано в %1.
+
+Could not write %1.
+%1 konnte nicht geschrieben werden.
+Не удалось записать %1.
+Не вдалося записати %1.
+
+%1 contains no Prevent Resampling settings.
+%1 enthält keine Einstellungen von Prevent Resampling.
+%1 не содержит настроек Prevent Resampling.
+%1 не містить налаштувань Prevent Resampling.
+
+Settings imported from %1.
+Einstellungen importiert aus %1.
+Настройки импортированы из %1.
+Налаштування імпортовано з %1.
+
+Refresh
+Aktualisieren
+Обновить
+Оновити
+
+Reset counters
+Zähler zurücksetzen
+Сбросить счётчики
+Скинути лічильники
+
+Test format
+Format testen
+Проверить формат
+Перевірити формат
+
+Switches the Windows default format back and forth once (stop playback first)
+Schaltet das Windows-Standardformat einmal um und zurück (vorher Wiedergabe stoppen)
+Один раз переключает формат Windows по умолчанию туда и обратно (сначала остановите воспроизведение)
+Один раз перемикає типовий формат Windows туди й назад (спершу зупиніть відтворення)
+
+RECENT EVENTS
+LETZTE EREIGNISSE
+ПОСЛЕДНИЕ СОБЫТИЯ
+ОСТАННІ ПОДІЇ
+
+# --- statistics (Advanced tab)
+by %1
+von %1
+автор %1
+автор %1
+
+The plugin is DISABLED (General tab).
+Das Plugin ist AUS (Tab Allgemein).
+Плагин ОТКЛЮЧЁН (вкладка Общие).
+Плагін ВИМКНЕНО (вкладка Загальні).
+
+NOW PLAYING
+AKTUELLE WIEDERGABE
+СЕЙЧАС ИГРАЕТ
+ЗАРАЗ ГРАЄ
+
+AIMP output:
+AIMP-Ausgabe:
+Вывод AIMP:
+Виведення AIMP:
+
+Mode:
+Modus:
+Режим:
+Режим:
+
+Track:
+Titel:
+Трек:
+Трек:
+
+%1 ch
+%1 Kan.
+%1 кан.
+%1 кан.
+
+AIMP rate:
+AIMP-Rate:
+Частота AIMP:
+Частота AIMP:
+
+AIMP resamples
+AIMP rechnet um
+AIMP пересчитывает
+AIMP перераховує
+
+Output rate:
+Ausgaberate:
+Частота вывода:
+Частота виведення:
+
+bit-perfect, no resampling
+bitgenau, keine Umrechnung
+bit-perfect, без пересчёта
+bit-perfect, без перерахунку
+
+integer multiple
+ganzzahliges Vielfaches
+кратная частота
+кратна частота
+
+Devices:
+Geräte:
+Устройства:
+Пристрої:
+
+Voicemeeter:
+Voicemeeter:
+Voicemeeter:
+Voicemeeter:
+
+Note:
+Hinweis:
+Примечание:
+Примітка:
+
+Timing:
+Timing:
+Задержки:
+Затримки:
+
+COUNTERS
+ZÄHLER
+СЧЁТЧИКИ
+ЛІЧИЛЬНИКИ
+
+Tracks analysed:
+Titel geprüft:
+Проверено треков:
+Перевірено треків:
+
+Switches:
+Umschaltungen:
+Переключений:
+Перемикань:
+
+Already matching:
+Passte schon:
+Уже совпадало:
+Уже збігалося:
+
+Failed:
+Fehlgeschlagen:
+Ошибок:
+Помилок:
+
+Voicemeeter restarts:
+Voicemeeter-Neustarts:
+Перезапусков Voicemeeter:
+Перезапусків Voicemeeter:
+
+AIMP restarts:
+AIMP-Neustarts:
+Перезапусков AIMP:
+Перезапусків AIMP:
+
+Switch time:
+Umschaltzeit:
+Время переключения:
+Час перемикання:
+
+%1 ms (last), %2 ms (average)
+%1 ms (zuletzt), %2 ms (Schnitt)
+%1 мс (последнее), %2 мс (среднее)
+%1 мс (останнє), %2 мс (середнє)
+
+TRACK SAMPLE RATES
+ABTASTRATEN DER TITEL
+ЧАСТОТЫ ТРЕКОВ
+ЧАСТОТИ ТРЕКІВ
+
+# --- About
+%1 for AIMP
+%1 für AIMP
+%1 для AIMP
+%1 для AIMP
+
+Version %1
+Version %1
+Версия %1
+Версія %1
+
+by %1 (RainBowFl4sh on GitHub)
+von %1 (RainBowFl4sh auf GitHub)
+автор %1 (RainBowFl4sh на GitHub)
+автор %1 (RainBowFl4sh на GitHub)
+
+Support this plugin
+Plugin unterstützen
+Поддержать плагин
+Підтримати плагін
+
+GitHub page
+GitHub-Seite
+Страница на GitHub
+Сторінка на GitHub
+
+All releases
+Alle Versionen
+Все версии
+Усі версії
+
+Report a problem
+Problem melden
+Сообщить о проблеме
+Повідомити про проблему
+
+Check for updates:
+Nach Updates suchen:
+Проверять обновления:
+Перевіряти оновлення:
+
+at every AIMP start
+bei jedem AIMP-Start
+при запуске AIMP
+при запуску AIMP
+
+once a day
+einmal am Tag
+раз в день
+раз на день
+
+once a week
+einmal pro Woche
+раз в неделю
+раз на тиждень
+
+once a month
+einmal im Monat
+раз в месяц
+раз на місяць
+
+Check now
+Jetzt prüfen
+Проверить
+Перевірити
+
+Install updates automatically
+Updates automatisch installieren
+Устанавливать обновления автоматически
+Встановлювати оновлення автоматично
+
+Install %1
+%1 installieren
+Установить %1
+Встановити %1
+
+What's new?
+Was ist neu?
+Что нового?
+Що нового?
+
+Changelog:
+Änderungen:
+Список изменений:
+Список змін:
+
+never
+nie
+никогда
+ніколи
+
+Not checked for updates yet.
+Noch nicht nach Updates gesucht.
+Обновления ещё не проверялись.
+Оновлення ще не перевірялися.
+
+Version %1 is available (last check: %2).
+Version %1 ist verfügbar (letzte Prüfung: %2).
+Доступна версия %1 (последняя проверка: %2).
+Доступна версія %1 (остання перевірка: %2).
+
+The last update check failed (%1). Click "Check now" to try again.
+Die letzte Update-Prüfung ist fehlgeschlagen (%1). Klicke auf „Jetzt prüfen“.
+Последняя проверка не удалась (%1). Нажмите «Проверить», чтобы повторить.
+Остання перевірка не вдалася (%1). Натисніть «Перевірити», щоб повторити.
+
+You have the latest version (last check: %1).
+Du hast die neueste Version (letzte Prüfung: %1).
+У вас последняя версия (последняя проверка: %1).
+У вас остання версія (остання перевірка: %1).
+
+Version %1 is available.
+Version %1 ist verfügbar.
+Доступна версия %1.
+Доступна версія %1.
+
+Version %1 is available (no package attached yet - see All releases).
+Version %1 ist verfügbar (noch kein Paket angehängt - siehe Alle Versionen).
+Доступна версия %1 (пакет ещё не прикреплён - см. Все версии).
+Доступна версія %1 (пакет ще не додано - див. Усі версії).
+
+Version %1 was opened in AIMP - confirm the installation there; AIMP restarts by itself afterwards.
+Version %1 wurde in AIMP geöffnet - bestätige dort die Installation; AIMP startet danach von selbst neu.
+Версия %1 открыта в AIMP - подтвердите там установку; затем AIMP перезапустится сам.
+Версію %1 відкрито в AIMP - підтвердьте там встановлення; потім AIMP перезапуститься сам.
+
+Checking for updates...
+Suche nach Updates...
+Проверка обновлений...
+Перевірка оновлень...
+
+Downloading %1...
+Lade %1 herunter...
+Загрузка %1...
+Завантаження %1...
+
+Update installed - restarting AIMP...
+Update installiert - AIMP startet neu...
+Обновление установлено - перезапуск AIMP...
+Оновлення встановлено - перезапуск AIMP...
+
+Update check failed.
+Update-Prüfung fehlgeschlagen.
+Не удалось проверить обновления.
+Не вдалося перевірити оновлення.
+
+Update check failed: %1.
+Update-Prüfung fehlgeschlagen: %1.
+Не удалось проверить обновления: %1.
+Не вдалося перевірити оновлення: %1.
+
+No release found on GitHub.
+Keine Version auf GitHub gefunden.
+На GitHub нет выпусков.
+На GitHub немає випусків.
+
+Could not save %1.
+%1 konnte nicht gespeichert werden.
+Не удалось сохранить %1.
+Не вдалося зберегти %1.
+
+Could not open %1 - please open it in AIMP yourself.
+%1 konnte nicht geöffnet werden - bitte selbst in AIMP öffnen.
+Не удалось открыть %1 - откройте его в AIMP сами.
+Не вдалося відкрити %1 - відкрийте його в AIMP самі.
+
+Update check not available (AIMP's HTTP client is missing).
+Update-Prüfung nicht möglich (AIMPs HTTP-Client fehlt).
+Проверка обновлений недоступна (нет HTTP-клиента AIMP).
+Перевірка оновлень недоступна (немає HTTP-клієнта AIMP).
+
+Download failed.
+Download fehlgeschlagen.
+Загрузка не удалась.
+Завантаження не вдалося.
+
+Download failed: %1.
+Download fehlgeschlagen: %1.
+Загрузка не удалась: %1.
+Завантаження не вдалося: %1.
+
+Download not available.
+Download nicht verfügbar.
+Загрузка недоступна.
+Завантаження недоступне.
+
+The package has no SHA-256 checksum - not installed.
+Das Paket hat keine SHA-256-Prüfsumme - nicht installiert.
+У пакета нет контрольной суммы SHA-256 - не установлено.
+Пакет не має контрольної суми SHA-256 - не встановлено.
+
+Checksum mismatch - the download was discarded.
+Prüfsumme stimmt nicht - der Download wurde verworfen.
+Контрольная сумма не совпала - загрузка удалена.
+Контрольна сума не збіглася - завантаження видалено.
+
+# --- notice after an update
+%1 for AIMP was updated to version %2.
+%1 für AIMP wurde auf Version %2 aktualisiert.
+%1 для AIMP обновлён до версии %2.
+%1 для AIMP оновлено до версії %2.
+
+AIMP restarted to load the new version. The changes are on the About tab: Preferences → Plugins → %1 → About.
+AIMP wurde neu gestartet, um die neue Version zu laden. Die Änderungen stehen im Tab Über: Einstellungen → Plugins → %1 → Über.
+AIMP перезапущен, чтобы загрузить новую версию. Изменения – на вкладке «Инфо»: Настройки → Плагины → %1 → Инфо.
+AIMP перезапущено, щоб завантажити нову версію. Зміни – на вкладці «Інфо»: Налаштування → Плагіни → %1 → Інфо.
+
+# --- 2.7.0: quick switch (AIMP's menus and hotkeys)
+Enabled
+Aktiviert
+Включён
+Увімкнено
+
+Audio chain...
+Audiokette...
+Аудиотракт...
+Аудіотракт...
+
+Settings...
+Einstellungen...
+Настройки...
+Налаштування...
+
+Switch on / off
+Ein- / ausschalten
+Включить / выключить
+Увімкнути / вимкнути
+
+Show the audio chain
+Audiokette anzeigen
+Показать аудиотракт
+Показати аудіотракт
+
+%1 is on
+%1 ist an
+%1 включён
+%1 увімкнено
+
+%1 is off
+%1 ist aus
+%1 выключен
+%1 вимкнено
+
+# --- 2.7.0: General tab (highest rate, exceptions)
+Highest sample rate:
+Höchste Abtastrate:
+Максимальная частота:
+Максимальна частота:
+
+No limit
+Keine Grenze
+Без ограничения
+Без обмеження
+
+Higher rates are lowered within their family: 192 → 96, 176.4 → 88.2 kHz (AIMP resamples them).
+Höhere Raten werden innerhalb ihrer Familie gesenkt: 192 → 96, 176,4 → 88,2 kHz (AIMP rechnet sie um).
+Более высокие частоты понижаются в пределах своего семейства: 192 → 96, 176,4 → 88,2 кГц (AIMP пересчитывает их).
+Вищі частоти знижуються в межах своєї родини: 192 → 96, 176,4 → 88,2 кГц (AIMP перераховує їх).
+
+AIMP for Linux plays every track at its own rate (Output tab) - this setting has no effect there.
+AIMP für Linux spielt jeden Titel mit seiner eigenen Rate (Tab Ausgabe) – dort hat diese Einstellung keine Wirkung.
+AIMP для Linux воспроизводит каждый трек со своей частотой (вкладка «Вывод») – там эта настройка не действует.
+AIMP для Linux відтворює кожен трек зі своєю частотою (вкладка «Вихід») – там це налаштування не діє.
+
+Do not switch for lossy formats (MP3, AAC, Ogg Vorbis, Opus …)
+Nicht umschalten bei verlustbehafteten Formaten (MP3, AAC, Opus …)
+Не переключать для форматов с потерями (MP3, AAC, Ogg Vorbis, Opus …)
+Не перемикати для форматів із втратами (MP3, AAC, Ogg Vorbis, Opus …)
+
+Do not switch for these folders or playlists:
+Nicht umschalten für diese Ordner oder Playlists:
+Не переключать для этих папок или плейлистов:
+Не перемикати для цих тек або плейлистів:
+
+Folder...
+Ordner...
+Папка...
+Тека...
+
+Separated by ';'. A full path also covers its subfolders; a name matches every folder and playlist of that name.
+Mit ';' getrennt. Ein vollständiger Pfad gilt auch für seine Unterordner; ein Name passt auf jeden Ordner und jede Playlist dieses Namens.
+Через ';'. Полный путь охватывает и вложенные папки; имя подходит к любой папке и любому плейлисту с таким именем.
+Через ';'. Повний шлях охоплює й вкладені теки; ім'я підходить до будь-якої теки й будь-якого плейлиста з такою назвою.
+
+# --- 2.7.0: Output tab (bit depth, bit-perfect status)
+Bit depth follows the track too (16 / 24 / 32 bit, WASAPI shared)
+Auch die Bittiefe anpassen (16 / 24 / 32 Bit, WASAPI shared)
+Менять и разрядность под трек (16 / 24 / 32 бит, WASAPI shared)
+Змінювати й розрядність під трек (16 / 24 / 32 біт, WASAPI shared)
+
+Bit-perfect
+Bitgenau
+Bit-perfect
+Bit-perfect
+
+Bit-perfect after decoding
+Bitgenau nach dem Dekodieren
+Bit-perfect после декодирования
+Bit-perfect після декодування
+
+Not bit-perfect: %1
+Nicht bitgenau: %1
+Не bit-perfect: %1
+Не bit-perfect: %1
+
+Almost bit-perfect: %1
+Fast bitgenau: %1
+Почти bit-perfect: %1
+Майже bit-perfect: %1
+
+No resampling, but not bit-perfect: %1
+Keine Umrechnung, aber nicht bitgenau: %1
+Без ресемплинга, но не bit-perfect: %1
+Без ресемплінгу, але не bit-perfect: %1
+
+Nothing is playing - AIMP itself does not change the sound.
+Es läuft nichts – AIMP selbst verändert den Klang nicht.
+Ничего не играет – сам AIMP звук не меняет.
+Нічого не грає – сам AIMP звук не змінює.
+
+Not known yet: the rate behind AIMP could not be read.
+Noch unbekannt: die Rate hinter AIMP ließ sich nicht lesen.
+Пока неизвестно: частоту после AIMP прочитать не удалось.
+Поки невідомо: частоту після AIMP прочитати не вдалося.
+
+highest rate setting - AIMP resamples
+Einstellung höchste Rate – AIMP rechnet um
+настройка макс. частоты – AIMP пересчитывает
+налаштування макс. частоти – AIMP перераховує
+
+# --- 2.7.0: audio chain window
+Audio chain
+Audiokette
+Аудиотракт
+Аудіотракт
+
+Close
+Schließen
+Закрыть
+Закрити
+
+Windows
+Windows
+Windows
+Windows
+
+PipeWire
+PipeWire
+PipeWire
+PipeWire
+
+ALSA
+ALSA
+ALSA
+ALSA
+
+Device
+Gerät
+Устройство
+Пристрій
+
+Result
+Ergebnis
+Итог
+Підсумок
+
+Nothing is playing.
+Es wird nichts abgespielt.
+Ничего не воспроизводится.
+Нічого не відтворюється.
+
+Start a track to see its way to your device.
+Starte einen Titel, um seinen Weg zu deinem Gerät zu sehen.
+Запустите трек, чтобы увидеть его путь до устройства.
+Запустіть трек, щоб побачити його шлях до пристрою.
+
+Internet stream: never switched (the station decides the rate).
+Internetstream: wird nie umgeschaltet (der Sender bestimmt die Rate).
+Интернет-поток: не переключается (частоту задаёт станция).
+Інтернет-потік: не перемикається (частоту задає станція).
+
+Exception (General tab): the plugin does not switch for this track.
+Ausnahme (Tab Allgemein): das Plugin schaltet für diesen Titel nicht um.
+Исключение (вкладка «Общие»): для этого трека плагин не переключает.
+Виняток (вкладка «Загальні»): для цього треку плагін не перемикає.
+
+Lossy format: AIMP decodes it; after that nothing more needs to be lost.
+Verlustbehaftetes Format: AIMP dekodiert es; danach muss nichts mehr verloren gehen.
+Формат с потерями: AIMP декодирует его; дальше ничего больше теряться не должно.
+Формат із втратами: AIMP декодує його; далі нічого більше не повинно втрачатися.
+
+volume %1 %
+Lautstärke %1 %
+громкость %1 %
+гучність %1 %
+
+crossfade at track changes
+Überblendung beim Titelwechsel
+кроссфейд при смене треков
+кросфейд під час зміни треків
+
+resamples %1 → %2
+rechnet %1 → %2 um
+пересчитывает %1 → %2
+перераховує %1 → %2
+
+highest rate setting
+Einstellung höchste Rate
+настройка макс. частоты
+налаштування макс. частоти
+
+Output not known.
+Ausgabe unbekannt.
+Выход неизвестен.
+Вихід невідомий.
+
+The device's default format could not be read.
+Das Standardformat des Geräts ließ sich nicht lesen.
+Не удалось прочитать формат устройства по умолчанию.
+Не вдалося прочитати формат пристрою за замовчуванням.
+
+reduces %1 → %2 bit
+reduziert %1 → %2 Bit
+урезает %1 → %2 бит
+урізає %1 → %2 біт
+
+muted
+stummgeschaltet
+звук выключен
+звук вимкнено
+
+audio enhancements may be on
+Audioverbesserungen evtl. an
+возможно, включены улучшения звука
+можливо, увімкнено покращення звуку
+
+Not involved: AIMP opens the device itself (exclusive / ASIO).
+Nicht beteiligt: AIMP öffnet das Gerät selbst (exklusiv / ASIO).
+Не участвует: AIMP открывает устройство сам (эксклюзив / ASIO).
+Не бере участі: AIMP відкриває пристрій сам (ексклюзив / ASIO).
+
+Not involved: AIMP does not play into Voicemeeter.
+Nicht beteiligt: AIMP spielt nicht in Voicemeeter.
+Не участвует: AIMP не выводит звук в Voicemeeter.
+Не бере участі: AIMP не виводить звук у Voicemeeter.
+
+Runs at %1 like AIMP - no second resampling.
+Läuft wie AIMP mit %1 – keine zweite Umrechnung.
+Работает на %1, как AIMP – без второго пересчёта.
+Працює на %1, як AIMP – без другого перерахунку.
+
+Rate not set yet.
+Rate noch nicht gesetzt.
+Частота ещё не задана.
+Частоту ще не задано.
+
+ALSA direct: AIMP opens the device itself.
+ALSA direkt: AIMP öffnet das Gerät selbst.
+ALSA напрямую: AIMP открывает устройство сам.
+ALSA напряму: AIMP відкриває пристрій сам.
+
+Leave bus EQ and effects off, fader at 0 dB (not checked).
+Bus-EQ und Effekte aus lassen, Fader auf 0 dB (nicht geprüft).
+EQ и эффекты шины выключены, фейдер 0 дБ (не проверяется).
+EQ і ефекти шини вимкнені, фейдер 0 дБ (не перевіряється).
+
+unknown device
+unbekanntes Gerät
+неизвестное устройство
+невідомий пристрій
+
+Not bit-perfect: %1.
+Nicht bitgenau: %1.
+Не bit-perfect: %1.
+Не bit-perfect: %1.
+
+Almost bit-perfect: %1.
+Fast bitgenau: %1.
+Почти bit-perfect: %1.
+Майже bit-perfect: %1.
+
+No resampling, but not bit-perfect: %1.
+Keine Umrechnung, aber nicht bitgenau: %1.
+Без ресемплинга, но не bit-perfect: %1.
+Без ресемплінгу, але не bit-perfect: %1.
+
+Bit-perfect after decoding: the samples reach %1 unchanged.
+Bitgenau nach dem Dekodieren: die Samples erreichen %1 unverändert.
+Bit-perfect после декодирования: сэмплы доходят до %1 без изменений.
+Bit-perfect після декодування: семпли доходять до %1 без змін.
+
+the device
+das Gerät
+устройства
+пристрою
+
+Bit-perfect: the samples of the file reach %1 unchanged.
+Bitgenau: die Samples der Datei erreichen %1 unverändert.
+Bit-perfect: сэмплы файла доходят до %1 без изменений.
+Bit-perfect: семпли файлу доходять до %1 без змін.
+
+The plugin is disabled (General tab): rates are not switched.
+Das Plugin ist deaktiviert (Tab Allgemein): Raten werden nicht umgeschaltet.
+Плагин отключён (вкладка «Общие»): частоты не переключаются.
+Плагін вимкнено (вкладка «Загальні»): частоти не перемикаються.
+
+# 2.7.0: details of the audio chain (steps, names of the details, values)
+Track
+Titel
+Трек
+Трек
+
+AIMP sound processing
+AIMP-Klangbearbeitung
+Обработка звука AIMP
+Обробка звуку AIMP
+
+AIMP volume
+AIMP-Lautstärke
+Громкость AIMP
+Гучність AIMP
+
+AIMP output
+AIMP-Ausgabe
+Выход AIMP
+Вихід AIMP
+
+Format
+Format
+Формат
+Формат
+
+Sample rate
+Abtastrate
+Частота
+Частота
+
+Bit depth
+Bittiefe
+Разрядность
+Розрядність
+
+none (lossy format)
+keine (verlustbehaftet)
+нет (с потерями)
+немає (з втратами)
+
+Equalizer
+Equalizer
+Эквалайзер
+Еквалайзер
+
+Sound effects
+Klangeffekte
+Звуковые эффекты
+Звукові ефекти
+
+Volume levelling
+Pegelausgleich
+Нормализация
+Нормалізація
+
+Crossfade
+Überblendung
+Кроссфейд
+Кросфейд
+
+Gapless
+Lückenlos
+Без пауз
+Без пауз
+
+Resampling
+Umrechnung
+Передискретизация
+Передискретизація
+
+Volume
+Lautstärke
+Громкость
+Гучність
+
+Type
+Typ
+Тип
+Тип
+
+Prevent Resampling
+Prevent Resampling
+Prevent Resampling
+Prevent Resampling
+
+Default format
+Standardformat
+Формат по умолч.
+Формат за замовч.
+
+Mixing
+Mischen
+Микширование
+Мікшування
+
+Windows volume
+Windows-Lautstärke
+Громкость Windows
+Гучність Windows
+
+Enhancements
+Verbesserungen
+Улучшения
+Покращення
+
+Graph rate
+Graph-Rate
+Частота графа
+Частота графа
+
+Engine rate
+Engine-Rate
+Частота движка
+Частота рушія
+
+off
+aus
+выкл.
+вимк.
+
+on
+an
+вкл.
+увімк.
+
+on (bands up to %1)
+an (Bänder bis %1)
+вкл. (полосы до %1)
+увімк. (смуги до %1)
+
+%1 s at track changes
+%1 s beim Titelwechsel
+%1 с при смене треков
+%1 с під час зміни треків
+
+at track changes
+beim Titelwechsel
+при смене треков
+під час зміни треків
+
+off (%1 ms pause between tracks)
+aus (%1 ms Pause zwischen Titeln)
+выкл. (пауза %1 мс между треками)
+вимк. (пауза %1 мс між треками)
+
+none
+keine
+нет
+немає
+
+none (%1)
+keine (%1)
+нет (%1)
+немає (%1)
+
+changes the samples
+verändert die Samples
+меняет сэмплы
+змінює семпли
+
+100 % (unchanged)
+100 % (unverändert)
+100 % (без изменений)
+100 % (без змін)
+
+not known
+unbekannt
+неизвестно
+невідомо
+
+fixed in AIMP
+fest in AIMP
+задана в AIMP
+задана в AIMP
+
+set by the plugin
+vom Plugin gesetzt
+задана плагином
+задана плагіном
+
+off (rates are not switched)
+aus (Raten werden nicht umgeschaltet)
+выкл. (частоты не переключаются)
+вимк. (частоти не перемикаються)
+
+32-bit float, samples unchanged
+32-Bit-Float, Samples unverändert
+32-bit float, сэмплы без изменений
+32-bit float, семпли без змін
+
+may be on
+evtl. an
+возможно, вкл.
+можливо, увімк.
+
+# AIMP's processing in the chain (sound effects)
+equalizer
+Equalizer
+эквалайзер
+еквалайзер
+
+chorus
+Chorus
+хорус
+хорус
+
+echo
+Echo
+эхо
+луна
+
+flanger
+Flanger
+флэнджер
+фленджер
+
+reverb
+Hall
+реверберация
+реверберація
+
+bass boost
+Bassverstärkung
+усиление басов
+посилення басів
+
+pitch
+Tonhöhe
+высота тона
+висота тону
+
+speed
+Geschwindigkeit
+скорость
+швидкість
+
+tempo
+Tempo
+темп
+темп
+
+balance
+Balance
+баланс
+баланс
+
+enhancer
+Enhancer
+энхансер
+енхансер

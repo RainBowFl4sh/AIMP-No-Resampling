@@ -127,7 +127,13 @@ public:
     }
     HRESULT WINAPI GetValueAsObject(INT32 id, CONSTIID iid, void** v) override;
     HRESULT WINAPI SetValueAsFloat(INT32 id, const DOUBLE v) override { ints[id] = (long long)v; return S_OK; }
-    HRESULT WINAPI SetValueAsInt32(INT32 id, INT32 v) override { ints[id] = v; return S_OK; }
+    HRESULT WINAPI SetValueAsInt32(INT32 id, INT32 v) override {
+        ints[id] = v;
+        static const char form[] = "Form";
+        if (id == AIMPUI_CONTROL_PROPID_VISIBLE && v && kind == TStr(form, form + 4)) Shown();  // a form shown without a modal loop
+        return S_OK;
+    }
+    void Shown();
     HRESULT WINAPI SetValueAsInt64(INT32 id, const INT64 v) override { ints[id] = v; return S_OK; }
     HRESULT WINAPI SetValueAsObject(INT32 id, IUnknown* v) override {
         IAIMPString* s = nullptr;
@@ -203,6 +209,10 @@ public:
     // IAIMPUIButton
     virtual HRESULT WINAPI ShowDropDownMenu() { return S_OK; }
 
+    // IAIMPUIScrollBox
+    virtual HRESULT WINAPI MakeVisible(IAIMPUIControl* c) { madeVisible = c; return S_OK; }
+    void* madeVisible = nullptr;
+
     // IAIMPUIPageControl
     virtual HRESULT WINAPI Add(IAIMPString* name, IAIMPUITabSheet** page);
     virtual HRESULT WINAPI Delete2(IAIMPUITabSheet*) { return E_NOTIMPL; }
@@ -210,12 +220,21 @@ public:
     virtual INT32 WINAPI GetCount() { return 0; }
 
     // IAIMPUIForm
-    virtual HRESULT WINAPI Close() { return S_OK; }
+    virtual HRESULT WINAPI Close() {  // asks the form events like AIMP (OnCloseQuery)
+        closed = true;
+        IAIMPUIFormEvents* e = nullptr;
+        if (events_ && events_->QueryInterface(IID_IAIMPUIFormEvents, reinterpret_cast<void**>(&e)) == S_OK && e) {
+            BOOL can = 1;
+            e->OnCloseQuery(nullptr, &can);
+            e->Release();
+        }
+        return S_OK;
+    }
     virtual HRESULT WINAPI GetFocusedControl(IAIMPUIWinControl**) { return E_NOTIMPL; }
     virtual HRESULT WINAPI Localize() { return S_OK; }
     virtual HRESULT WINAPI Destroy(BOOL) { destroyed = true; return S_OK; }
-    virtual INT32 WINAPI ShowModal() { return 0; }
-    bool destroyed = false;
+    virtual INT32 WINAPI ShowModal();  // calls Registry::onModal (the test looks at the window), then returns
+    bool destroyed = false, closed = false;
 
 private:
     Registry* reg_;
@@ -226,6 +245,8 @@ private:
 // all objects created through the UI service, in creation order (the test keeps one reference each)
 struct Registry {
     std::vector<IUnknown*> objects;
+    std::function<void(void* form)> onModal;  // while a form is shown (modally or not; the test looks at the window)
+    int modalLoops = 0;                       // forms shown with ShowModal (blocking AIMP)
 
     struct Info {
         TStr kind, name;
@@ -283,6 +304,18 @@ HRESULT WINAPI Ctl<I>::GetValueAsObject(INT32 id, CONSTIID iid, void** v) {
 }
 
 template <class I>
+void Ctl<I>::Shown() {
+    if (reg_->onModal) reg_->onModal(static_cast<IAIMPUIControl*>(static_cast<I*>(this)));
+}
+
+template <class I>
+INT32 WINAPI Ctl<I>::ShowModal() {
+    reg_->modalLoops++;
+    if (reg_->onModal) reg_->onModal(static_cast<IAIMPUIControl*>(static_cast<I*>(this)));
+    return 0;
+}
+
+template <class I>
 HRESULT WINAPI Ctl<I>::Add(IAIMPString* name, IAIMPUITabSheet** page) {
     if (!page) return E_POINTER;
     Ctl<IAIMPUITabSheet>* sheet = reg_->template Make<IAIMPUITabSheet>(TStr(1, 'S'), StrOf(name), nullptr);
@@ -313,6 +346,58 @@ private:
     }
 };
 
+// List of strings (the folders picked in the folder dialog)
+class StringList final : public IAIMPObjectList {
+    std::atomic<long> ref_{1};
+
+public:
+    std::vector<IUnknown*> items;
+    ~StringList() { Clear(); }
+    HRESULT __unknwncall QueryInterface(REFIID riid, LPVOID* ppv) override {
+        *ppv = nullptr;
+        if (memcmp(&riid, &IID_IUnknown, sizeof(GUID)) && memcmp(&riid, &IID_IAIMPObjectList, sizeof(GUID))) return E_NOINTERFACE;
+        *ppv = this;
+        AddRef();
+        return S_OK;
+    }
+    DWORD __unknwncall AddRef() override { return (DWORD)++ref_; }
+    DWORD __unknwncall Release() override {
+        DWORD r = (DWORD)--ref_;
+        if (!r) delete this;
+        return r;
+    }
+    HRESULT WINAPI Add(IUnknown* o) override { o->AddRef(); items.push_back(o); return S_OK; }
+    HRESULT WINAPI Clear() override { for (auto* o : items) o->Release(); items.clear(); return S_OK; }
+    HRESULT WINAPI Delete(INT32) override { return E_NOTIMPL; }
+    HRESULT WINAPI Insert(INT32, IUnknown*) override { return E_NOTIMPL; }
+    INT32 WINAPI GetCount() override { return (INT32)items.size(); }
+    HRESULT WINAPI GetObject(INT32 i, CONSTIID iid, void** o) override {
+        if (i < 0 || i >= (INT32)items.size()) return E_INVALIDARG;
+        return items[(size_t)i]->QueryInterface(iid, o);
+    }
+    HRESULT WINAPI SetObject(INT32, IUnknown*) override { return E_NOTIMPL; }
+};
+
+// Folder dialog: the test sets the folder the "user" picks
+class FolderDialog final : public IAIMPUIBrowseFolderDialog {
+public:
+    TStr pick;  // empty = the user cancels
+    int opened = 0;
+    HRESULT __unknwncall QueryInterface(REFIID, LPVOID* ppv) override { *ppv = nullptr; return E_NOINTERFACE; }
+    DWORD __unknwncall AddRef() override { return 2; }
+    DWORD __unknwncall Release() override { return 1; }
+    HRESULT WINAPI Execute(HWND, DWORD, IAIMPString*, IAIMPObjectList** sel) override {
+        ++opened;
+        if (pick.empty()) return E_ABORT;
+        auto* l = new StringList();
+        IAIMPString* s = NewString(pick);
+        l->Add(s);
+        s->Release();
+        *sel = l;
+        return S_OK;
+    }
+};
+
 // Message dialog: remembers what was shown
 class MessageDialog final : public IAIMPUIMessageDialog {
 public:
@@ -333,6 +418,7 @@ class Service final : public IAIMPServiceUI {
 public:
     Registry reg;
     FileDialogs dialogs;
+    FolderDialog folders;
     MessageDialog message;
     HRESULT __unknwncall QueryInterface(REFIID riid, LPVOID* ppv) override {
         // like AIMP: the message dialog and the file dialogs are queried from the UI service
@@ -358,6 +444,7 @@ public:
         if (is(IID_IAIMPUIMemo))        { *obj = static_cast<IAIMPUIMemo*>(reg.Make<IAIMPUIMemo>(K("Memo"), n, events, pp)); return S_OK; }
         if (is(IID_IAIMPUIImage))       { *obj = static_cast<IAIMPUIImage*>(reg.Make<IAIMPUIImage>(K("Image"), n, events, pp)); return S_OK; }
         if (is(IID_IAIMPUISpinEdit))    { *obj = static_cast<IAIMPUISpinEdit*>(reg.Make<IAIMPUISpinEdit>(K("Spin"), n, events, pp)); return S_OK; }
+        if (is(IID_IAIMPUIScrollBox))   { *obj = static_cast<IAIMPUIScrollBox*>(reg.Make<IAIMPUIScrollBox>(K("Scroll"), n, events, pp)); return S_OK; }
         if (is(IID_IAIMPUIPaintBox))    { *obj = static_cast<IAIMPUIPaintBox*>(reg.Make<IAIMPUIPaintBox>(K("Paint"), n, events, pp)); return S_OK; }
         const unsigned char* g = reinterpret_cast<const unsigned char*>(&iid);
         printf("mock_ui: control type not supported:");
@@ -372,6 +459,10 @@ public:
         return S_OK;
     }
     HRESULT WINAPI CreateObject(IAIMPUIForm*, IUnknown*, CONSTIID iid, void** obj) override {
+        if (memcmp(&iid, &IID_IAIMPUIBrowseFolderDialog, sizeof(GUID)) == 0) {
+            *obj = static_cast<IAIMPUIBrowseFolderDialog*>(&folders);
+            return S_OK;
+        }
         if (memcmp(&iid, &IID_IAIMPUIFileDialogs, sizeof(GUID)) != 0) return E_NOTIMPL;
         *obj = static_cast<IAIMPUIFileDialogs*>(&dialogs);
         return S_OK;
@@ -389,7 +480,19 @@ public:
     DWORD __unknwncall AddRef() override { return 2; }
     DWORD __unknwncall Release() override { return 1; }
     HRESULT WINAPI FrameModified(IAIMPOptionsDialogFrame*) override { ++modified; return S_OK; }
-    HRESULT WINAPI FrameShow(IUnknown*, BOOL) override { return S_OK; }
+    int shown = 0;
+    bool createOnShow = false;  // like AIMP: FrameShow creates the page (CreateFrame) when it does not exist yet
+    HRESULT WINAPI FrameShow(IUnknown* frame, BOOL) override {
+        if (createOnShow && frame) {
+            IAIMPOptionsDialogFrame* page = nullptr;
+            if (frame->QueryInterface(IID_IAIMPOptionsDialogFrame, (void**)&page) == S_OK && page) {
+                page->CreateFrame((HWND)0);
+                page->Release();
+            }
+        }
+        ++shown;
+        return S_OK;
+    }
 };
 
 }  // namespace mockui

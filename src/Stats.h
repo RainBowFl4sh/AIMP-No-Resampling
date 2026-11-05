@@ -25,6 +25,15 @@ public:
     int64_t lastSwitchMs = 0;
     uint32_t trackRate = 0, trackBits = 0, trackChannels = 0, deviceRate = 0, aimpRate = 0;
     tstring trackCodec, aimpOutput, modeText, chainText, vmText, hardwareText, note;
+    // For the audio chain window (U2)
+    int mode = 0;                     // OutputMode the track was played with (resolved)
+    tstring trackFile;                // file of the track the state belongs to
+    tstring endDevice, endDeviceId;   // device that is heard (Windows id if known)
+    tstring aimpDevice, aimpDeviceId; // Windows device AIMP plays into (shared mode, DirectSound)
+    uint32_t limitedTo = 0;           // the track's rate was limited to this (highest rate setting), 0 = no
+    tstring exception;                // not switched because of this exception (General tab), empty = none
+    bool vmChain = false;             // AIMP plays into Voicemeeter
+    uint32_t vmEngineRate = 0;        // Voicemeeter's engine rate after switching
 
     template <typename F>
     void Update(F f) {
@@ -57,6 +66,9 @@ private:
         trackChannels = o.trackChannels; deviceRate = o.deviceRate; aimpRate = o.aimpRate;
         trackCodec = o.trackCodec; aimpOutput = o.aimpOutput; modeText = o.modeText; chainText = o.chainText;
         vmText = o.vmText; hardwareText = o.hardwareText; note = o.note;
+        mode = o.mode; trackFile = o.trackFile; endDevice = o.endDevice; endDeviceId = o.endDeviceId;
+        aimpDevice = o.aimpDevice; aimpDeviceId = o.aimpDeviceId;
+        limitedTo = o.limitedTo; exception = o.exception; vmChain = o.vmChain; vmEngineRate = o.vmEngineRate;
     }
 
 public:
@@ -82,11 +94,12 @@ public:
         if (aimpRate)
             row("AIMP rate:", Khz(aimpRate) + (trackRate && aimpRate != trackRate ? AR_T("  (") + Tr("AIMP resamples") + AR_T(")") : tstring()));
         bool aimpOk = !aimpRate || aimpRate == deviceRate;
-        row("Output rate:",
-            (deviceRate ? Khz(deviceRate) : tstring(AR_T("-"))) +
-                (deviceRate && trackRate && aimpOk
-                     ? AR_T("  (") + Tr(deviceRate == trackRate ? "bit-perfect, no resampling" : "integer multiple") + AR_T(")")
-                     : tstring()));
+        const char* how = !deviceRate || !trackRate || !aimpOk ? nullptr
+                          : deviceRate == trackRate                  ? "bit-perfect, no resampling"
+                          : deviceRate > trackRate && deviceRate % trackRate == 0 ? "integer multiple"
+                          : limitedTo && deviceRate == limitedTo     ? "highest rate setting - AIMP resamples"
+                                                                     : nullptr;
+        row("Output rate:", (deviceRate ? Khz(deviceRate) : tstring(AR_T("-"))) + (how ? AR_T("  (") + Tr(how) + AR_T(")") : tstring()));
         if (!chainText.empty()) row("Devices:", chainText);
         if (!vmText.empty()) row("Voicemeeter:", vmText);
         if (!note.empty()) row("Note:", note);
@@ -98,7 +111,7 @@ public:
         row("Switches:", Num(switches));
         row("Already matching:", Num(skipped));
         row("Failed:", Num(failures));
-        row("Voicemeeter restarts:", Num(vmRestarts));
+        if (!vmText.empty() || vmRestarts) row("Voicemeeter restarts:", Num(vmRestarts));
         row("AIMP restarts:", Num(aimpRestarts));
         if (switches)
             row("Switch time:", Trf("%1 ms (last), %2 ms (average)", {Num(lastSwitchMs), Num(switchMsTotal / switches)}));

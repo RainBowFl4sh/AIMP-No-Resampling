@@ -1,6 +1,7 @@
 // AIMP Prevent Resampling - switches the output (Windows device format, ASIO, Voicemeeter engine or
 // PipeWire on Linux) to the sample rate of the current track so nothing gets resampled.
 // Built against AIMP SDK v6.00 (build 3083); compiles to a Win32/Win64 DLL and a Linux .so.
+#include "Menu.h"
 #include "OptionsFrame.h"
 #include "apiPlugin.h"
 
@@ -17,6 +18,7 @@ namespace ar {
 
 static Engine* g_engine = nullptr;
 static OptionsFrame* g_frame = nullptr;
+static QuickSwitch* g_quick = nullptr;  // AIMP's menus and hotkeys (F1)
 static bool g_updated = false;  // first start of a newer version than the last one (shown after loading)
 
 // Before 2.6.1 the settings file was always in %APPDATA%\AIMP (Linux: $XDG_CONFIG_HOME/AIMP), also for a
@@ -52,6 +54,76 @@ static void ShowUpdatedNotice() {
     if (!ShowMessage(text)) Log(AR_T("Update notice could not be shown (no message dialog in this AIMP version)"));
 }
 
+// Texts outside the settings page follow the plugin's language (the page may show another one while it is open)
+static void UseLanguage() {
+    if (g_engine && !(g_frame && g_frame->IsOpen())) CurrentLanguage() = ResolveLanguage(g_engine->cfg.language);
+}
+
+// F1: AIMP's menu or a hotkey switches the plugin on or off; AIMP shows the new state for 2 s
+static void Toggle(const TChar* how) {
+    if (!g_engine) return;
+    bool on = !g_engine->cfg.enabled;
+    UseLanguage();
+    g_engine->SetEnabled(on, how);
+    QuickSwitch::Notify(Trf(on ? "%1 is on" : "%1 is off", {AR_T(AR_PLUGIN_NAME)}));
+}
+
+static void ShowChainWindow() {
+    if (!g_engine) return;
+    UseLanguage();
+    ChainWindow::Open(g_engine, ChainWindow::MainWindow());
+}
+
+static void ShowSettings(int tab = -1) {
+    auto svc = Service<IAIMPServiceOptionsDialog>(IID_IAIMPServiceOptionsDialog);
+    if (!svc || !g_frame) return;
+    g_frame->pendingTab = tab;  // used when AIMP creates the page
+    svc->FrameShow(static_cast<IAIMPOptionsDialogFrame*>(g_frame), 1);
+    // AIMP 6 opens the first tab again after creating the page, so the tab is set once more afterwards
+    if (tab >= 0 && g_frame->IsOpen()) g_frame->ShowTab(tab);
+    g_frame->pendingTab = -1;
+}
+
+// "Restart AIMP now" (bit-perfect mode) was pressed on the settings page: open it again on the same tab
+// AIMP restarts (bit-perfect mode or the legacy method): the plugin's windows that are open now come back
+// after the start, as they were - the settings page on the same tab, the audio chain at the same place
+static void RememberWindowsForRestart() {
+    Ini& ini = Ini::Get();
+    tstring chain = ChainWindow::Place();
+    if (!chain.empty()) ini.Set(AR_T("Restart"), AR_T("ReopenChain"), chain);
+    if (g_frame && g_frame->IsOpen() && !ini.Has(AR_T("Restart"), AR_T("ReopenSettings")))
+        ini.Set(AR_T("Restart"), AR_T("ReopenSettings"), (long long)g_frame->ActiveTab());
+    ini.Save();
+}
+
+static void ReopenSettingsAfterRestart() {
+    Ini& ini = Ini::Get();
+    bool settings = ini.Has(AR_T("Restart"), AR_T("ReopenSettings"));
+    bool chain = ini.Has(AR_T("Restart"), AR_T("ReopenChain"));
+    if (!settings && !chain) return;
+    int tab = settings ? (int)ini.Int(AR_T("Restart"), AR_T("ReopenSettings"), 0) : -1;
+    tstring place = chain ? ini.Str(AR_T("Restart"), AR_T("ReopenChain"), tstring()) : tstring();
+    ini.Remove(AR_T("Restart"), AR_T("ReopenSettings"));
+    ini.Remove(AR_T("Restart"), AR_T("ReopenChain"));
+    ini.Save();
+    if (!g_engine) return;
+    // the audio chain first: AIMP 4 shows its preferences modally
+    if (chain) {
+        Log(AR_T("Opening the audio chain again after the restart"));
+        g_engine->Later([place] {
+            if (!g_engine) return;
+            UseLanguage();
+            ChainWindow::Open(g_engine, ChainWindow::MainWindow(), place);
+        });
+    }
+    if (settings) {
+        Log(AR_T("Opening the settings again after the restart (tab ") + Num(tab) + AR_T(")"));
+        g_engine->Later([tab] { ShowSettings(tab); });
+    }
+}
+
+static bool g_terminating;  // AIMP_MSG_EVENT_TERMINATING arrived
+
 class Hook : public ComObject<IAIMPMessageHook> {
 protected:
     bool Supports(REFIID riid) override { return EqualGUID(riid, IID_IAIMPMessageHook); }
@@ -59,11 +131,23 @@ protected:
 public:
     void WINAPI CoreMessage(DWORD msg, INT32 param1, void*, HRESULT*) override {
         if (!g_engine) return;
-        if (msg == (DWORD)AIMP_MSG_EVENT_STREAM_START) g_engine->OnStreamStart();
-        else if (msg == (DWORD)AIMP_MSG_EVENT_PLAYER_STATE) g_engine->OnPlayerState(param1);
+        if (msg == (DWORD)AIMP_MSG_EVENT_STREAM_START || msg == (DWORD)AIMP_MSG_EVENT_PLAYER_STATE) {
+            if (msg == (DWORD)AIMP_MSG_EVENT_STREAM_START) g_engine->OnStreamStart();
+            else g_engine->OnPlayerState(param1);
+            // The audio chain follows at once (there is no Refresh button), after the plugin has handled the track.
+            // Only while it is shown and not while AIMP closes: AIMP 4 does not finish closing while a main-thread
+            // task of the plugin is still queued (it stops playback during shutdown).
+            if (!g_terminating && (ChainWindow::Current() || (g_frame && g_frame->IsOpen())))
+                g_engine->Later([] {
+                    if (ChainWindow::Current()) ChainWindow::Current()->Refresh();
+                    if (g_frame && g_frame->IsOpen()) g_frame->RefreshStats();
+                });
+        }
+        else if (msg == (DWORD)AIMP_MSG_EVENT_TERMINATING) g_terminating = true;
         else if (msg == (DWORD)AIMP_MSG_EVENT_LOADED) {
             g_engine->bitPerfect.Apply(g_engine->cfg);
             g_engine->ResumeAfterRestart();
+            ReopenSettingsAfterRestart();
             const Config& c = g_engine->cfg;
             if (c.updateCheck && Updater::Due(c.updateInterval)) g_engine->updater.Check(false, c.updateAutoInstall);
             if (g_updated) {
@@ -71,8 +155,15 @@ public:
                 g_engine->Later(ShowUpdatedNotice);
             }
         }
-        else if (msg == (DWORD)AIMP_MSG_EVENT_PLAYER_UPDATE_POSITION && g_frame && g_frame->IsOpen()) g_frame->RefreshStats();
-        else if (msg == (DWORD)AIMP_MSG_EVENT_LANGUAGE && g_frame) g_frame->OnAimpLanguageChanged();
+        else if (msg == (DWORD)AIMP_MSG_EVENT_PLAYER_UPDATE_POSITION) {  // about once a second while playing
+            g_engine->Tick();  // B5: did an output change?
+            if (ChainWindow::Current()) ChainWindow::Current()->Tick();
+            if (g_frame && g_frame->IsOpen()) g_frame->RefreshStats();
+        } else if (msg == (DWORD)AIMP_MSG_EVENT_LANGUAGE) {
+            if (g_frame) g_frame->OnAimpLanguageChanged();
+            UseLanguage();
+            if (g_quick) g_quick->Retranslate();
+        }
     }
 };
 
@@ -82,10 +173,7 @@ protected:
     bool Supports(REFIID riid) override { return EqualGUID(riid, IID_IAIMPExternalSettingsDialog); }
 
 public:
-    void WINAPI Show(HWND) override {
-        auto svc = Service<IAIMPServiceOptionsDialog>(IID_IAIMPServiceOptionsDialog);
-        if (svc && g_frame) svc->FrameShow(static_cast<IAIMPOptionsDialogFrame*>(g_frame), 1);
-    }
+    void WINAPI Show(HWND) override { ShowSettings(); }
 };
 
 class Plugin : public ComObject<IAIMPPlugin> {
@@ -205,9 +293,25 @@ public:
         *frame_.Out() = f;
         g_frame = f;
         core->RegisterExtension(IID_IAIMPServiceOptionsDialog, frame_.Get());
-        e->onStatsChanged = [] { if (g_frame && g_frame->IsOpen()) g_frame->RefreshStats(); };
+        e->onStatsChanged = [] {
+            if (g_frame && g_frame->IsOpen()) g_frame->RefreshStats();
+            if (ChainWindow::Current()) ChainWindow::Current()->Refresh();
+        };
+        // F1: menus and hotkeys
+        g_quick = new QuickSwitch();
+        g_quick->isEnabled = [] { return g_engine && g_engine->cfg.enabled; };
+        g_quick->toggle = [](const TChar* how) { Toggle(how); };
+        g_quick->showChain = [] { ShowChainWindow(); };
+        g_quick->showSettings = [] { ShowSettings(); };
+        bool menus = g_quick->Register();
+        e->onEnabledChanged = [] {
+            if (g_quick) g_quick->Update();
+            if (g_frame && g_frame->IsOpen()) g_frame->OnEnabledChanged();
+            if (ChainWindow::Current()) ChainWindow::Current()->Refresh();
+        };
         e->updater.downloadDir = settingsDir.substr(0, settingsDir.size() - 1);
         e->updater.onChanged = [] { if (g_frame && g_frame->IsOpen()) g_frame->RefreshAbout(); };
+        e->beforeRestart = RememberWindowsForRestart;
         e->updater.onPackageOpened = [] { if (g_engine) g_engine->WatchForUpdate(); };
 
         Log(tstring(AR_T(AR_PLUGIN_NAME " " AR_VERSION " started (")) +
@@ -223,6 +327,7 @@ public:
             Log(AR_T("Updated from ") + (lastRun.empty() ? tstring(AR_T("an older version")) : lastRun) + AR_T(" to " AR_VERSION));
         if (!e->cfg.enabled)
             Log(AR_T("Plugin is disabled - enable it in Preferences -> Plugins -> " AR_PLUGIN_NAME));
+        if (!menus) Log(AR_T("AIMP offers no menus or hotkeys for plugins - switch the plugin on its settings page"));
         e->aimpSync.profileDir = dir;
         e->aimpSync.LogDiagnostics(e->player.Get());
         e->aimpSync.LoadResume();
@@ -241,6 +346,13 @@ public:
 #endif
         if (disp_ && hook_) disp_->Unhook(hook_.Get());
         hook_.Reset();
+        ChainWindow::CloseAll();
+        e->onEnabledChanged = nullptr;
+        if (g_quick) {
+            g_quick->Unregister();
+            delete g_quick;
+            g_quick = nullptr;
+        }
         if (frame_) Core()->UnregisterExtension(frame_.Get());
         g_frame = nullptr;
         frame_.Reset();

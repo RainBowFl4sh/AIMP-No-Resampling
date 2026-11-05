@@ -66,6 +66,76 @@ class BitPerfect {
 public:
     static const TChar* Section() { return AR_T("BitPerfectSaved"); }
 
+    // AIMP's sound effects with their neutral value; name = what the audio chain window shows (translated)
+    struct Fx { const TChar* key; int msg; double neutral; const char* name; };
+    static const Fx* Effects(size_t* n) {
+        static const Fx fx[] = {
+            {AR_T("Chorus"), AIMP_MSG_PROPERTY_CHORUS, 0.0, "chorus"},       {AR_T("Echo"), AIMP_MSG_PROPERTY_ECHO, 0.0, "echo"},
+            {AR_T("Flanger"), AIMP_MSG_PROPERTY_FLANGER, 0.0, "flanger"},    {AR_T("Reverb"), AIMP_MSG_PROPERTY_REVERB, 0.0, "reverb"},
+            {AR_T("TrueBass"), AIMP_MSG_PROPERTY_TRUEBASS, 0.0, "bass boost"}, {AR_T("Pitch"), AIMP_MSG_PROPERTY_PITCH, 0.0, "pitch"},
+            {AR_T("Speed"), AIMP_MSG_PROPERTY_SPEED, 1.0, "speed"},          {AR_T("Tempo"), AIMP_MSG_PROPERTY_TEMPO, 1.0, "tempo"},
+            {AR_T("Balance"), AIMP_MSG_PROPERTY_BALANCE, 0.0, "balance"},
+            {AR_T("Enhancer"), AIMP_MSG_PROPERTY_ENHANCER, 1.0, "enhancer"},  // 1.0 = off (AIMP.ini Enhancer=1)
+        };
+        *n = sizeof(fx) / sizeof(fx[0]);
+        return fx;
+    }
+
+    // What in AIMP changes the signal right now (audio chain window, main thread). Only reads.
+    struct Signal {
+        std::vector<const char*> changes;  // translation keys: "equalizer", "reverb", "ReplayGain" ...
+        int volume = -1;                   // AIMP's volume in %, -1 = unknown
+        bool crossfade = false;            // only at track changes
+        int crossfadeMs = 0, pauseMs = 0;  // length of the crossfade, pause between tracks
+        double eqMaxDb = 0;                // equalizer: largest band gain (absolute)
+    };
+    static Signal SignalState() {
+        Signal r;
+        auto player = Service<IAIMPServicePlayer>(IID_IAIMPServicePlayer);
+        auto disp = Service<IAIMPServiceMessageDispatcher>(IID_IAIMPServiceMessageDispatcher);
+        Ptr<IAIMPPropertyList> props;
+        if (player) {
+            float v = 0;
+            if (Succeeded(player->GetVolume(&v))) r.volume = (int)std::lround(v * 100.0);
+            player->QueryInterface(IID_IAIMPPropertyList, props.OutV());
+        }
+        INT32 i = 0;
+        if (props && Succeeded(props->GetValueAsInt32(AIMP_PLAYER_PROPID_AUTOSWITCHING, &i)) && i) {
+            r.crossfade = true;
+            if (Succeeded(props->GetValueAsInt32(AIMP_PLAYER_PROPID_AUTOSWITCHING_CROSSFADE, &i))) r.crossfadeMs = i;
+        }
+        if (props && Succeeded(props->GetValueAsInt32(AIMP_PLAYER_PROPID_MANUALSWITCHING, &i)) && i) r.crossfade = true;
+        if (props && Succeeded(props->GetValueAsInt32(AIMP_PLAYER_PROPID_AUTOSWITCHING_PAUSE_BETWEEN_TRACKS, &i)) && i > 0)
+            r.pauseMs = i;
+        if (disp) {
+            i = 0;
+            if (Succeeded(disp->Send(AIMP_MSG_PROPERTY_CROSSMIXING, AIMP_MSG_PROPVALUE_GET, &i)) && i) r.crossfade = true;
+            i = 0;
+            if (Succeeded(disp->Send(AIMP_MSG_PROPERTY_EQUALIZER, AIMP_MSG_PROPVALUE_GET, &i)) && i) {
+                r.changes.push_back("equalizer");
+                for (int band = 0; band <= 18; band++) {  // HiWord: slider index
+                    float db = 0;
+                    if (Failed(disp->Send(AIMP_MSG_PROPERTY_EQUALIZER_BAND, (band << 16) | AIMP_MSG_PROPVALUE_GET, &db))) break;
+                    r.eqMaxDb = (std::max)(r.eqMaxDb, (double)std::fabs(db));
+                }
+            }
+            size_t n = 0;
+            const Fx* fx = Effects(&n);
+            for (size_t k = 0; k < n; k++) {
+                float x = (float)fx[k].neutral;
+                if (Succeeded(disp->Send(fx[k].msg, AIMP_MSG_PROPVALUE_GET, &x)) && std::fabs(x - fx[k].neutral) >= 0.0005)
+                    r.changes.push_back(fx[k].name);
+            }
+        }
+        size_t n = 0;
+        const BpStartupKey* k = BpStartupKeys(&n);
+        for (size_t j = 0; j < n; j++) {
+            int cur = 0;
+            if (AimpConfigInt(k[j], &cur) && cur != 0) r.changes.push_back(k[j].name);
+        }
+        return r;
+    }
+
     // Brings AIMP in line with the settings: neutral values while the mode is on, the saved values
     // back as soon as it (or one of its options, or the whole plugin) is off. Called at start-up and
     // after saving the page.
@@ -97,16 +167,10 @@ public:
         if (disp) {
             Bool(ini, AR_T("CrossMixing"), "crossfade", on, disp.Get(), AIMP_MSG_PROPERTY_CROSSMIXING);
             Bool(ini, AR_T("Equalizer"), "equalizer", on, disp.Get(), AIMP_MSG_PROPERTY_EQUALIZER);
-            struct Fx { const TChar* key; int msg; double neutral; };
-            static const Fx fx[] = {
-                {AR_T("Chorus"), AIMP_MSG_PROPERTY_CHORUS, 0.0},   {AR_T("Echo"), AIMP_MSG_PROPERTY_ECHO, 0.0},
-                {AR_T("Flanger"), AIMP_MSG_PROPERTY_FLANGER, 0.0}, {AR_T("Reverb"), AIMP_MSG_PROPERTY_REVERB, 0.0},
-                {AR_T("TrueBass"), AIMP_MSG_PROPERTY_TRUEBASS, 0.0}, {AR_T("Pitch"), AIMP_MSG_PROPERTY_PITCH, 0.0},
-                {AR_T("Speed"), AIMP_MSG_PROPERTY_SPEED, 1.0},     {AR_T("Tempo"), AIMP_MSG_PROPERTY_TEMPO, 1.0},
-                {AR_T("Balance"), AIMP_MSG_PROPERTY_BALANCE, 0.0},
-                {AR_T("Enhancer"), AIMP_MSG_PROPERTY_ENHANCER, 1.0},  // 1.0 = off (AIMP.ini Enhancer=1)
-            };
-            for (const Fx& f : fx) {
+            size_t nfx = 0;
+            const Fx* fx = Effects(&nfx);
+            for (size_t i = 0; i < nfx; i++) {
+                const Fx& f = fx[i];
                 int msg = f.msg;
                 Float(ini, f.key, "sound effects", on, f.neutral,
                       [&](double& v) { float x = 0; if (Failed(disp->Send(msg, AIMP_MSG_PROPVALUE_GET, &x))) return false; v = x; return true; },

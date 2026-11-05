@@ -21,6 +21,7 @@ namespace ar {
 struct TrackInfo {
     uint32_t rate = 0, bits = 0, channels = 0;
     tstring codec, aimpOutput;
+    bool lossy = false;  // MP3, AAC ... (no bit depth of its own)
 };
 
 struct Decision {
@@ -30,8 +31,11 @@ struct Decision {
     bool stopPlayback = false;  // playback has to be stopped for that
     uint32_t currentRate = 0;   // rate the output runs at right now (statistics)
     tstring chain, info;
+    tstring endName, endId;     // the device at the end of the chain (what is heard), Windows id if known
+    tstring aimpName, aimpId;   // Windows: the device AIMP plays into (a Voicemeeter input in a Voicemeeter chain)
 #ifdef _WIN32
     std::vector<win::Endpoint> targets;  // order: extra devices, Voicemeeter outputs, AIMP's device LAST
+    std::vector<std::pair<WORD, WORD>> bits;  // per target: new bit depth (container, valid); 0 = keep
     bool vm = false, vmEngine = false;
     bool vmNotRunning = false;  // the output goes to Voicemeeter, but Voicemeeter is not running (yet)
     bool asioDirect = false;
@@ -52,6 +56,20 @@ inline const TChar* ModeName(OutputMode m) {
     return AR_T("?");
 }
 
+// Output type for the setting (Automatic = from AIMP's output name)
+inline OutputMode ResolveMode(OutputMode setting, const tstring& aimpOutput) {
+    if (setting != OutputMode::Auto) return setting;
+#ifdef _WIN32
+    if (ContainsI(aimpOutput, AR_T("asio"))) return OutputMode::Asio;
+    if (ContainsI(aimpOutput, AR_T("exclusive")) || ContainsI(aimpOutput, AR_T("exklusiv"))) return OutputMode::Exclusive;
+    if (ContainsI(aimpOutput, AR_T("directsound"))) return OutputMode::DirectSound;
+    return OutputMode::Shared;
+#else
+    (void)aimpOutput;
+    return lnx::PipeWire::Available() ? OutputMode::PipeWire : OutputMode::Direct;
+#endif
+}
+
 class RateController {
     Config cfg_;
     Timing timing_;
@@ -66,13 +84,14 @@ class RateController {
     lnx::PipeWire pw_;
 #endif
 
-    // Same rate first, then integer multiples of the same family (44.1 -> 88.2 -> 176.4 etc.)
+    // Same rate first, then integer multiples of the same family (44.1 -> 88.2 -> 176.4 etc.), never above the
+    // highest rate of the settings (the track's rate is already limited to it, see Engine::Handle)
     std::vector<uint32_t> Candidates(uint32_t hz) const {
         std::vector<uint32_t> c{hz};
         if (!cfg_.allowMultiples) return c;
         uint32_t base = (hz % 44100 == 0) ? 44100 : (hz % 48000 == 0) ? 48000 : 0;
         if (base)
-            for (uint32_t m = hz / base * 2; m <= 8; m *= 2) c.push_back(base * m);
+            for (uint32_t m = hz / base * 2; m <= 8 && (!cfg_.maxRate || base * m <= cfg_.maxRate); m *= 2) c.push_back(base * m);
         return c;
     }
 
@@ -83,21 +102,19 @@ public:
         timing_ = t;
     }
 
-    OutputMode Resolve(const tstring& aimpOutput) const {
-        if (cfg_.mode != OutputMode::Auto) return cfg_.mode;
-#ifdef _WIN32
-        if (ContainsI(aimpOutput, AR_T("asio"))) return OutputMode::Asio;
-        if (ContainsI(aimpOutput, AR_T("exclusive")) || ContainsI(aimpOutput, AR_T("exklusiv"))) return OutputMode::Exclusive;
-        if (ContainsI(aimpOutput, AR_T("directsound"))) return OutputMode::DirectSound;
-        return OutputMode::Shared;
-#else
-        (void)aimpOutput;
-        return lnx::PipeWire::Available() ? OutputMode::PipeWire : OutputMode::Direct;
-#endif
-    }
+    OutputMode Resolve(const tstring& aimpOutput) const { return ResolveMode(cfg_.mode, aimpOutput); }
 
 #ifdef _WIN32
     void ResetAsio() { asioBusy_ = false; asioRateSet_ = 0; }
+
+    // B5: Voicemeeter's engine rate may have been changed in Voicemeeter meanwhile. The rate the plugin set is
+    // normally trusted (Option.sr can report a stale value right after a switch); seconds later, when an
+    // output change is checked, Voicemeeter's own value counts.
+    void ResyncVoicemeeter() {
+        if (!vmSet_) return;
+        uint32_t now = win::Voicemeeter::Get().PreferredRate();
+        if (now) vmSet_ = now;
+    }
 
     // ---------------------------------------------------------------- Windows
     Decision Prepare(const TrackInfo& t) {
@@ -152,6 +169,21 @@ public:
         }
         if (d.vm) d.chain += std::wstring(L"  [") + win::Voicemeeter::TypeName(vm.Type()) + L"]";
 
+        // The device that is heard: AIMP's own device, the ASIO driver, or the hardware on Voicemeeter's A1
+        if (havePrimary) { d.aimpName = primary.name; d.aimpId = primary.id; }
+        if (havePrimary && !primary.IsVB()) { d.endName = primary.name; d.endId = primary.id; }
+        if (d.mode == OutputMode::Asio && !d.asio.name.empty() && !vbAsio) { d.endName = d.asio.name; d.endId.clear(); }
+        if (d.vm) {
+            d.endName.clear();
+            d.endId.clear();
+            auto buses = vm.BusDevices(false);
+            if (!buses.empty()) {
+                d.endName = buses.front().second;
+                for (auto& e : d.targets)
+                    if (!e.IsVB() && win::NamesMatch(d.endName, e.name)) { d.endId = e.id; break; }
+            }
+        }
+
         if (sharedLike && !havePrimary && d.targets.empty()) {
             d.info = L"No Windows output device found (check the 'Windows device' setting)";
             return d;  // rate = 0 -> counts as failure
@@ -187,11 +219,34 @@ public:
         }
         if (!d.rate) return d;
 
+        // Bit depth (optional, off by default): the default format of the devices AIMP plays into in shared
+        // mode follows the track as well - 16 -> 16 bit, 24 -> 24 bit (packed or in 32 bits), 32 -> 32 bit,
+        // if the driver supports it; otherwise the depth stays. Not for Voicemeeter: it mixes in float anyway.
+        d.bits.assign(d.targets.size(), std::pair<WORD, WORD>(0, 0));
+        if (cfg_.matchBitDepth && sharedLike && !d.vm && t.bits && !t.lossy) {
+            std::vector<std::pair<WORD, WORD>> wanted;
+            if (t.bits <= 16) wanted = {{16, 16}};
+            else if (t.bits <= 24) wanted = {{24, 24}, {32, 24}, {32, 32}};  // 32 bit carries 24 bit unchanged
+            else wanted = {{32, 32}};
+            for (size_t i = 0; i < d.targets.size(); i++) {
+                if (d.targets[i].IsVB() || !known[i]) continue;
+                for (auto& w : wanted) {
+                    WAVEFORMATEXTENSIBLE f = win::WithBits(win::WithRate(formats[i], d.rate), w.first, w.second);
+                    if (win::SameFormat(f, win::WithRate(formats[i], d.rate)) ||
+                        win::SupportsExclusive(d.targets[i].id, f) == 1) {
+                        d.bits[i] = w;
+                        break;
+                    }
+                }
+            }
+        }
+
         // Does anything have to change at all?
         for (size_t i = 0; i < d.targets.size(); i++) {
             if (!known[i]) continue;
             if (!d.currentRate) d.currentRate = formats[i].Format.nSamplesPerSec;
             if (formats[i].Format.nSamplesPerSec != d.rate) d.apply = true;
+            if (d.bits[i].first && !win::SameFormat(formats[i], Target(formats[i], d, i))) d.apply = true;
         }
         if (d.vmEngine) {
             uint32_t known = vmSet_ ? vmSet_ : vm.PreferredRate();
@@ -204,17 +259,29 @@ public:
         return d;
     }
 
+    // New default format of target i: the chosen rate, and the bit depth if it follows the track
+    static WAVEFORMATEXTENSIBLE Target(const WAVEFORMATEXTENSIBLE& cur, const Decision& d, size_t i) {
+        WAVEFORMATEXTENSIBLE f = win::WithRate(cur, d.rate);
+        if (i < d.bits.size() && d.bits[i].first) f = win::WithBits(f, d.bits[i].first, d.bits[i].second);
+        return f;
+    }
+
     // Returns the resulting output rate (0 = error)
     uint32_t Apply(const Decision& d) {
         bool ok = true, formatsChanged = false;
-        for (auto& e : d.targets) {
+        for (size_t i = 0; i < d.targets.size(); i++) {
+            const win::Endpoint& e = d.targets[i];
             WAVEFORMATEXTENSIBLE f;
-            if (!win::GetDeviceFormat(e.id, f) || f.Format.nSamplesPerSec == d.rate) continue;
+            if (!win::GetDeviceFormat(e.id, f)) continue;
+            WAVEFORMATEXTENSIBLE want = Target(f, d, i);
+            if (win::SameFormat(f, want)) continue;
             if (!original_.count(e.id)) original_[e.id] = f;
-            bool r = win::SetDeviceFormat(e.id, win::WithRate(f, d.rate));
+            bool r = win::SetDeviceFormat(e.id, want);
             ok &= r;
             formatsChanged |= r;
-            Log(e.name + L": " + Khz(f.Format.nSamplesPerSec) + L" -> " + Khz(d.rate) + (r ? L"  OK" : L"  FAILED"));
+            bool bitsChange = win::ValidBits(f) != win::ValidBits(want) || win::IsFloat(f) != win::IsFloat(want);
+            Log(e.name + L": " + Khz(f.Format.nSamplesPerSec) + (bitsChange ? L" / " + win::BitsText(f) : std::wstring()) + L" -> " +
+                Khz(d.rate) + (bitsChange ? L" / " + win::BitsText(want) : std::wstring()) + (r ? L"  OK" : L"  FAILED"));
         }
         uint32_t result = ok ? d.rate : 0;
 
@@ -388,7 +455,7 @@ public:
 
     tstring VoicemeeterStatus() {
         auto& vm = win::Voicemeeter::Get();
-        if (!vm.Installed()) return L"not installed";
+        if (!vm.Installed()) return tstring();  // not mentioned at all where it is not installed
         long t = vm.Type();
         if (!t) return L"installed, not running";
         uint32_t eng = vm.EngineRate();
@@ -399,16 +466,21 @@ public:
 
 #else
     void ResetAsio() {}
+    void ResyncVoicemeeter() {}
 
     // ---------------------------------------------------------------- Linux
     Decision Prepare(const TrackInfo& t) {
         Decision d;
         d.mode = Resolve(t.aimpOutput);
         d.rate = t.rate;
+        d.endName = t.aimpOutput;
         if (d.mode == OutputMode::PipeWire) {
             d.chain = "PipeWire (clock.force-rate)";
-            d.currentRate = pw_.Forced();
-            d.apply = pw_.Forced() != t.rate;
+            // what PipeWire really runs at: it may have been changed or restarted meanwhile (e.g. while the plugin
+            // was switched off); the rate set last if it cannot be read
+            uint32_t now = 0;
+            d.currentRate = lnx::PipeWire::ReadForced(now) ? now : pw_.Forced();
+            d.apply = d.currentRate != t.rate;
             d.stopPlayback = false;  // PipeWire switches the graph while playing
         } else {
             d.currentRate = t.rate;
