@@ -41,7 +41,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build libcairo2-dev mingw-w64 wine64
+          sudo apt-get install -y --no-install-recommends ninja-build libcairo2-dev mingw-w64 wine64 pulseaudio pulseaudio-utils
       - name: Linux (x64)
         run: |
           cmake -S . -B build/linux -G Ninja -DAR_BUILD_TESTS=ON
@@ -61,7 +61,7 @@ jobs:
       - name: Test the Windows DLL under Wine
         run: |
           SDK=sdk
-          x86_64-w64-mingw32-g++ -std=c++17 -O1 -DUNICODE -D_UNICODE -DNOMINMAX -Dwtoll=_wtoi64 -isystem $SDK \
+          x86_64-w64-mingw32-g++ -std=c++17 -O1 -DUNICODE -D_UNICODE -DNOMINMAX -Dwtoll=_wtoi64 -isystem $SDK -I build/win64/generated \
             tests/MockHost.cpp $SDK/apiTypes.cpp -o build/MockHost.exe -static -lole32 -loleaut32 -luuid -lgdi32 -luser32
           mkdir -p build/wine && cp build/MockHost.exe dist/PreventResampling/x64/PreventResampling.dll build/wine/
           cd build/wine && WINEDEBUG=-all WINEPREFIX=$PWD/prefix timeout 300 /usr/lib/wine/wine64 MockHost.exe PreventResampling.dll .
@@ -69,6 +69,29 @@ jobs:
           for i in $(seq 1 30); do grep -q "Restart helper: starting AIMP" PreventResampling.log && break; sleep 1; done
           grep -a "Restart helper" PreventResampling.log
           iconv -f UTF-16 -t UTF-8 AIMP.ini | grep -q "DeviceFreq=96000"
+      - name: Test with a simulated Voicemeeter under Wine
+        run: |
+          cd build/wine
+          export WINEDEBUG=-all WINEPREFIX=$PWD/prefix XDG_RUNTIME_DIR=$RUNNER_TEMP/xdg
+          mkdir -p -m 700 $XDG_RUNTIME_DIR
+          # Voicemeeter Banana stand-in (tests/fakevm), registered like the real installer does it
+          VB="prefix/drive_c/Program Files (x86)/VB/Voicemeeter"
+          mkdir -p "$VB"
+          x86_64-w64-mingw32-gcc -O1 -shared -Wl,--kill-at ../../tests/fakevm/FakeVoicemeeterRemote.c -o "$VB/VoicemeeterRemote64.dll"
+          echo > "$VB/voicemeeterprosetup.exe"
+          for v in 32 64; do
+            /usr/lib/wine/wine64 reg add 'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VB:Voicemeeter {17359A74-1236-5467}' \
+              /v UninstallString /t REG_SZ /d 'C:\Program Files (x86)\VB\Voicemeeter\voicemeeterprosetup.exe' /reg:$v /f
+          done
+          # Audio devices for Wine: PulseAudio null sinks named like Voicemeeter's input and the DAC on A1
+          pulseaudio -D -n --exit-idle-time=-1 -L module-native-protocol-unix
+          for i in $(seq 1 20); do pactl info > /dev/null 2>&1 && break; sleep 0.5; done
+          pactl load-module module-null-sink sink_name=vm_input "sink_properties=\"device.description='Voicemeeter Input (VB-Audio Voicemeeter VAIO)'\""
+          pactl load-module module-null-sink sink_name=fiio "sink_properties=\"device.description='FiiO KA11'\""
+          pactl set-default-sink fiio
+          pactl list sinks short
+          rm -f PreventResampling.ini PreventResampling.log AIMP.ini
+          timeout 300 /usr/lib/wine/wine64 MockHost.exe PreventResampling.dll . voicemeeter
       - name: AIMP package (.aimppack)
         run: |
           mkdir -p pkg
@@ -86,8 +109,9 @@ jobs:
             cp "dist/$file" zipstage/PreventResampling/
             (cd zipstage && zip -qr ../pkg/PreventResampling-$VERSION-$name.zip PreventResampling)
           done
-          # release notes = the section of this version in CHANGELOG.md
-          awk -v v="## $VERSION" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md > pkg/notes.md
+          # release notes = the section of this version in CHANGELOG.md, with the downloads, the PayPal line and
+          # the Full Changelog link (same layout as the releases of the Discord RP plugin)
+          python3 tools/release_notes.py "$VERSION" > pkg/notes.md
       - name: Show package
         run: find dist pkg -type f -exec ls -l {} \;
       - uses: actions/upload-artifact@v4
