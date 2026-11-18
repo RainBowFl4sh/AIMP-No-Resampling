@@ -41,7 +41,7 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build libcairo2-dev mingw-w64 wine64 pulseaudio pulseaudio-utils
+          sudo apt-get install -y --no-install-recommends ninja-build libcairo2-dev mingw-w64 wine64 pulseaudio pulseaudio-utils xvfb
       - name: Linux (x64)
         run: |
           cmake -S . -B build/linux -G Ninja -DAR_BUILD_TESTS=ON
@@ -64,6 +64,11 @@ jobs:
           x86_64-w64-mingw32-g++ -std=c++17 -O1 -DUNICODE -D_UNICODE -DNOMINMAX -Dwtoll=_wtoi64 -isystem $SDK -I build/win64/generated \
             tests/MockHost.cpp $SDK/apiTypes.cpp -o build/MockHost.exe -static -lole32 -loleaut32 -luuid -lgdi32 -luser32
           mkdir -p build/wine && cp build/MockHost.exe dist/PreventResampling/x64/PreventResampling.dll build/wine/
+          # A display for Wine: the rate change without restart works in a stand-in for AIMP's preferences
+          # window, and Wine creates no windows without one (it stays for the restart helper below)
+          Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &
+          export DISPLAY=:99
+          sleep 1
           cd build/wine && WINEDEBUG=-all WINEPREFIX=$PWD/prefix timeout 300 /usr/lib/wine/wine64 MockHost.exe PreventResampling.dll .
           # The restart helper (rundll32) keeps running after the test: AIMP.ini must contain 96000
           for i in $(seq 1 30); do grep -q "Restart helper: starting AIMP" PreventResampling.log && break; sleep 1; done
