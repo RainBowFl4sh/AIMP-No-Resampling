@@ -21,6 +21,8 @@
 #include "apiPlaylists.h"
 #include "apiThreading.h"
 #ifdef _WIN32
+#include <map>
+#include "win/LiveRate.h"
 #include "win/Restart.h"
 #endif
 
@@ -102,6 +104,10 @@ private:
     bool vmWatch_ = false;
     tstring vmBuses_;
     uint32_t vmRate_ = 0;
+    // 2.8: AIMP's rate list per AIMP output, as read from its preferences (worker only)
+    std::map<tstring, std::vector<uint32_t>> aimpLists_;
+    std::atomic<bool> livePending_{false};  // AIMP's preferences were open: switch when they are closed (Tick)
+    int liveFailures_ = 0;  // worker: changes in a row where AIMP's preferences could not be used (3 = given up)
 
     void OnMain(std::function<void()> f, bool wait) {
         if (quit_) return;  // Finalize waits on the main thread -> do not block
@@ -182,32 +188,50 @@ private:
         uint32_t aimpRate = 0;
         OnMain([this, &aimpRate] { lastAimpRate_ = aimpRate = aimpSync.AimpRate(); }, true);
 
-        // ASIO / WASAPI exclusive / DirectSound: AIMP only follows the track if it is restarted.
-        // Without the (experimental) restart option the plugin does not follow the track there; it
-        // only keeps a Voicemeeter chain at AIMP's own rate so the pitch is always right.
+        // ASIO / WASAPI exclusive / DirectSound: AIMP plays with its own fixed rate there. Since 2.8 the
+        // plugin changes that rate on the fly (win/LiveRate.h): devices first (Voicemeeter, DirectSound's
+        // device), then AIMP, then AIMP's setting is checked. The legacy option restarts AIMP instead.
+        // Where AIMP's rate cannot change, the devices stay at AIMP's rate so the pitch is always right.
         bool restartOutput = NeedsAimpRestart(mode);
 #ifdef _WIN32
-        bool canRestart = restartOutput && j.cfg.restartAimp && aimpRate;
+        bool canRestart = restartOutput && j.cfg.legacyRestart && aimpRate;
+        bool live = restartOutput && !canRestart && aimpRate;
 #else
-        bool canRestart = false;
+        bool canRestart = false, live = false;
 #endif
-        bool passive = restartOutput && !canRestart;
+        bool passive = restartOutput && !canRestart && !live;
         TrackInfo t = j.track;
         tstring note;
+#ifdef _WIN32
+        if (live) {
+            bool open = false;
+            OnMain([&open] { open = win::LiveRate::PreferencesOpen(); }, true);
+            if (open) {  // never touch the window the user works in
+                live = false;
+                passive = true;
+                livePending_ = true;
+                note = tstring(AR_T("AIMP's preferences are open - AIMP's rate follows when they are closed; devices stay at AIMP's rate (")) +
+                       Khz(aimpRate) + AR_T(")");
+            } else if (liveFailures_ >= 3) {  // this AIMP's preferences cannot be used (see the log)
+                live = false;
+                passive = true;
+                note = tstring(AR_T("AIMP's rate cannot be changed in this AIMP - devices stay at AIMP's rate (")) + Khz(aimpRate) + AR_T(")");
+            }
+        }
+#endif
         if (passive) {
             if (!aimpRate) {
                 stats.Update([&](Stats& s) {
                     s.modeText = ModeName(mode);
-                    s.note = AR_T("restart option off - nothing changed");
+                    s.note = AR_T("AIMP's output rate unknown - nothing changed");
                     if (!j.selfRestart) s.skipped++;
                 });
                 if (!j.selfRestart)
                     Log(AR_T("Track ") + Khz(j.track.rate) + AR_T(" | ") + ModeName(mode) +
-                        AR_T(" | restart option off - nothing changed"));
+                        AR_T(" | AIMP's output rate unknown - nothing changed"));
                 return;
             }
             t.rate = aimpRate;
-            note = tstring(AR_T("restart option off - devices stay at AIMP's rate (")) + Khz(aimpRate) + AR_T(")");
         }
 #ifndef _WIN32
         // AIMP for Linux also resamples every track to its own fixed rate (AIMPSoundOut\DeviceFreq),
@@ -231,8 +255,8 @@ private:
 #endif
 
         // Highest rate (General tab): 192 -> 96, 176.4 -> 88.2 kHz etc.; AIMP resamples the track then.
-        // Only where the plugin follows the track: AIMP's own fixed rate (exclusive / ASIO without the
-        // restart option, Linux) is AIMP's setting, and the devices behind AIMP must keep running at it.
+        // Only where the plugin follows the track: AIMP's own fixed rate where it cannot change (preferences
+        // open, Linux) is AIMP's setting, and the devices behind AIMP must keep running at it.
 #ifdef _WIN32
         bool followsTrack = !passive;
 #else
@@ -245,7 +269,29 @@ private:
         }
 
         Decision d = rc.Prepare(t);
+        std::vector<uint32_t> liveWanted;
+        uint32_t liveTarget = 0;
 #ifdef _WIN32
+        // The rates AIMP should take; if AIMP's list for this output is known and offers none of them, AIMP
+        // keeps its rate and the devices follow AIMP instead
+        if (live && d.rate) {
+            liveWanted = rc.LiveRates(d, t.rate);
+            auto known = aimpLists_.find(j.track.aimpOutput);
+            if (known != aimpLists_.end()) {
+                for (uint32_t w : liveWanted)
+                    if (std::find(known->second.begin(), known->second.end(), w) != known->second.end()) { liveTarget = w; break; }
+                if (!liveTarget) {
+                    live = false;
+                    passive = true;
+                    note = tstring(AR_T("AIMP does not offer ")) + Khz(liveWanted.empty() ? t.rate : liveWanted[0]) +
+                           AR_T(" for this output - devices stay at AIMP's rate (") + Khz(aimpRate) + AR_T(")");
+                    t.rate = aimpRate;
+                    d = rc.Prepare(t);
+                }
+            } else if (!liveWanted.empty()) {
+                liveTarget = liveWanted[0];
+            }
+        }
         if (passive && !d.vm) d.apply = d.stopPlayback = false;  // nothing to keep in sync
         if (d.vmNotRunning) {
             waitForVm_ = true;
@@ -298,6 +344,14 @@ private:
         }
         bool devApply = d.apply;
         if (aimpNeeds) d.apply = d.stopPlayback = true;
+#ifdef _WIN32
+        // Without restart: AIMP changes its output while the track keeps playing; playback only stops if
+        // devices change as well (as with every other output), and AIMP takes the new rate meanwhile
+        bool liveNeeds = live && liveTarget && liveTarget != aimpRate;
+        if (liveNeeds) d.apply = true;
+#else
+        bool liveNeeds = false;
+#endif
         if (!d.apply) {
             stats.Update([&](Stats& s) {
                 if (!j.selfRestart) s.skipped++;
@@ -314,8 +368,10 @@ private:
         }
         if (gen_ != j.gen) return;  // another track is playing meanwhile
 
-        Log(AR_T("  -> switching output to ") + Khz(d.rate) +
-            (aimpNeeds ? tstring(AR_T(" (AIMP: ")) + Khz(aimpRate) + AR_T(" -> ") + Khz(d.rate) + AR_T(", restart)") : tstring()));
+        Log(AR_T("  -> switching output to ") + Khz(liveNeeds && !devApply ? liveTarget : d.rate) +
+            (aimpNeeds ? tstring(AR_T(" (AIMP: ")) + Khz(aimpRate) + AR_T(" -> ") + Khz(d.rate) + AR_T(", restart)")
+             : liveNeeds ? tstring(AR_T(" (AIMP: ")) + Khz(aimpRate) + AR_T(" -> ") + Khz(liveTarget) + AR_T(", without restart)")
+                         : tstring()));
         int64_t t0 = NowMs();
         double pos = 0;
         if (d.stopPlayback) {
@@ -333,6 +389,56 @@ private:
         }
         applying_ = true;
         uint32_t result = devApply ? rc.Apply(d) : d.rate;
+#ifdef _WIN32
+        bool liveOk = true;
+        uint32_t liveGot = 0;
+        if (liveNeeds && !quit_ && gen_ == j.gen) {
+            std::vector<uint32_t> want = liveWanted;
+            if (devApply && result && result != d.rate) want = {result};  // e.g. an ASIO driver set by the plugin
+            win::LiveRate::Result lr = SwitchAimpLive(want);
+            if (!lr.list.empty()) aimpLists_[j.track.aimpOutput] = lr.list;
+            liveOk = lr.ok;
+            liveGot = lr.got ? lr.got : aimpRate;
+            // A window or list that is not found (e.g. another AIMP version): after three times in a row the
+            // plugin stops trying, instead of opening AIMP's preferences in vain for every track
+            if (lr.ok || lr.open || lr.busy || !lr.list.empty()) liveFailures_ = 0;
+            else if (!quit_ && ++liveFailures_ == 3)
+                Log(AR_T("AIMP's rate could not be changed three times in a row - not tried again until AIMP restarts. "
+                         "The legacy method (ASIO / Exclusive tab) restarts AIMP instead."));
+            if (lr.ok) {
+                Log(AR_T("  AIMP: ") + Khz(aimpRate) + AR_T(" -> ") + Khz(liveGot) + AR_T(" without restart (") + Num(lr.ms) +
+                    AR_T(" ms)"));
+                if (!devApply) result = liveGot;
+                // Voicemeeter's ASIO driver runs at the engine rate, whatever AIMP asks for: both must match
+                uint32_t eng = d.vm && d.mode == OutputMode::Asio ? win::Voicemeeter::Get().EngineRate() : 0;
+                if (eng && eng != liveGot) {
+                    Log(AR_T("  Voicemeeter's engine runs at ") + Khz(eng) + AR_T(", not ") + Khz(liveGot) + AR_T(" - AIMP follows Voicemeeter"));
+                    win::LiveRate::Result again = SwitchAimpLive({eng});
+                    if (again.got) liveGot = again.got;
+                    liveOk = false;
+                    result = 0;
+                } else if (eng) {
+                    Log(AR_T("  Voicemeeter's engine and AIMP: ") + Khz(eng));
+                }
+            } else {
+                if (lr.open) livePending_ = true;
+                Log(AR_T("  AIMP's rate stays at ") + Khz(liveGot) + AR_T(": ") + lr.why +
+                    (lr.list.empty() ? tstring() : AR_T(" (AIMP offers ") + RateList(lr.list) + AR_T(")")));
+                // The devices behind AIMP have to run at AIMP's rate (Voicemeeter's ASIO driver would play at
+                // the wrong speed otherwise): back to it
+                if (devApply && liveGot != d.rate) {
+                    TrackInfo back = t;
+                    back.rate = liveGot;
+                    Decision b = rc.Prepare(back);
+                    if (b.rate && b.apply) {
+                        Log(AR_T("  devices back to AIMP's rate ") + Khz(liveGot));
+                        rc.Apply(b);
+                    }
+                }
+                result = 0;
+            }
+        }
+#endif
         lastApplyEnd_ = NowMs();
         applying_ = false;
         int64_t dt = NowMs() - t0;
@@ -350,6 +456,12 @@ private:
             }
 #ifdef _WIN32
             if (d.vm && devApply && d.vmEngine) s.vmRestarts++;
+            if (liveNeeds) {
+                if (liveGot) s.aimpRate = liveGot;
+                if (liveOk) s.aimpLive++;
+                else s.note = tstring(AR_T("AIMP's rate could not be changed - it stays at ")) + Khz(liveGot);
+                if (!liveOk && devApply) s.deviceRate = liveGot;
+            }
 #endif
         });
         WatchVoicemeeter(d);
@@ -399,6 +511,44 @@ private:
         (void)d;
 #endif
     }
+
+#ifdef _WIN32
+    static tstring RateList(const std::vector<uint32_t>& l) {
+        tstring r;
+        for (uint32_t v : l) r += (r.empty() ? AR_T("") : AR_T(", ")) + Num(v);
+        return r;
+    }
+
+    // Worker: AIMP's own rate without restart (win/LiveRate.h runs on the main thread, the worker waits)
+    win::LiveRate::Result SwitchAimpLive(const std::vector<uint32_t>& wanted) {
+        struct Wait {
+            std::mutex m;
+            std::condition_variable cv;
+            bool done = false;
+            win::LiveRate::Result r;
+        };
+        auto w = std::make_shared<Wait>();
+        OnMain([this, w, wanted] {
+            win::LiveRate::Get().Start(wanted, [this] { return aimpSync.LiveAimpRate(); },
+                                       [this, w](const win::LiveRate::Result& r) {
+                                           if (r.got) lastAimpRate_ = r.got;  // the plugin's own change (see Tick)
+                                           std::lock_guard<std::mutex> l(w->m);
+                                           w->r = r;
+                                           w->done = true;
+                                           w->cv.notify_all();
+                                       });
+        }, true);
+        std::unique_lock<std::mutex> l(w->m);
+        for (int64_t until = NowMs() + 15000; !w->done && !quit_ && NowMs() < until;)
+            w->cv.wait_for(l, std::chrono::milliseconds(100));
+        if (!w->done) {
+            win::LiveRate::Result r;
+            r.why = quit_ ? L"AIMP is closing" : L"no answer";
+            return r;
+        }
+        return w->r;
+    }
+#endif
 
     // Worker, every 2 s while AIMP plays into Voicemeeter: did someone change A1-A5 or the engine rate?
     void CheckVoicemeeterChanged() {
@@ -709,7 +859,7 @@ public:
     }
 
     // Internet radio and other streams (http://, https://, mms:// ...): never switched. Switching stops and
-    // restarts playback - for a live stream that means reconnecting, and with the restart option a whole
+    // restarts playback - for a live stream that means reconnecting, and with the legacy restart a whole
     // AIMP restart on every station change. A local file has no scheme (Windows "C:\...", Linux "/..."),
     // a file:// URL counts as local. AIMP's own check (IsURL) is asked as well.
     static bool IsStream(const tstring& file) {
@@ -879,6 +1029,14 @@ public:
             OutputChanged(AR_T("AIMP output ") + out);
             return;
         }
+#ifdef _WIN32
+        if (livePending_ && !win::LiveRate::Running() && !win::LiveRate::PreferencesOpen()) {
+            livePending_ = false;
+            OutputChanged(AR_T("AIMP's preferences closed"));
+            return;
+        }
+        if (win::LiveRate::Running()) return;  // the plugin changes AIMP's rate right now
+#endif
         uint32_t live = aimpSync.LiveAimpRate();
         if (lastAimpRate_ && live && live != lastAimpRate_) {
             lastAimpRate_ = live;
@@ -935,6 +1093,7 @@ public:
             s.failures = rd(AR_T("Failures"));
             s.vmRestarts = rd(AR_T("VoicemeeterRestarts"));
             s.aimpRestarts = rd(AR_T("AimpRestarts"));
+            s.aimpLive = rd(AR_T("AimpRateChanges"));
             s.switchMsTotal = i.Int(sec, AR_T("SwitchMsTotal"), 0);
             for (auto& part : Split(rates, AR_T(';'))) {
                 size_t eq = part.find(AR_T('='));
@@ -958,6 +1117,7 @@ public:
         i.Set(sec, AR_T("Failures"), (long long)s.failures);
         i.Set(sec, AR_T("VoicemeeterRestarts"), (long long)s.vmRestarts);
         i.Set(sec, AR_T("AimpRestarts"), (long long)s.aimpRestarts);
+        i.Set(sec, AR_T("AimpRateChanges"), (long long)s.aimpLive);
         i.Set(sec, AR_T("SwitchMsTotal"), (long long)s.switchMsTotal);
         tstring rates;
         for (auto& r : s.rates) rates += Num(r.first) + AR_T("=") + Num(r.second) + AR_T(";");

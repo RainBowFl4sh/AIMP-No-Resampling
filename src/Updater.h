@@ -325,7 +325,7 @@ public:
         long long last = Ini::Get().Int(AR_T("Updates"), AR_T("LastCheck"), 0);
         long long now = (long long)time(nullptr);
         // After a failed check try again at the next start - but at most once an hour, because the
-        // restart option can restart AIMP on every track
+        // legacy restart method can restart AIMP on every track
         if (Ini::Get().Bool(AR_T("Updates"), AR_T("LastCheckFailed"), false) && interval > 0)
             return last <= 0 || last > now || now - last >= 3600;
         return interval <= 0 || last <= 0 || last > now || now - last >= secs[(std::min)(interval, 3)];

@@ -350,6 +350,10 @@ struct Threads : Obj<IAIMPServiceThreads> {
     HRESULT WaitFor(TTaskHandle) override { return E_NOTIMPL; }
 };
 
+#ifdef _WIN32
+static void OpenMockOptions();  // AIMP_MSG_CMD_OPTIONS (see MockOptions below)
+#endif
+
 struct Dispatcher : Obj<IAIMPServiceMessageDispatcher> {
     IAIMPMessageHook* hook = nullptr;
     int notifications = 0;
@@ -366,6 +370,12 @@ struct Dispatcher : Obj<IAIMPServiceMessageDispatcher> {
             *(HWND*)p2 = (HWND)0x4712;
             return S_OK;
         }
+#ifdef _WIN32
+        if (msg == (DWORD)AIMP_MSG_CMD_OPTIONS) {
+            OpenMockOptions();
+            return S_OK;
+        }
+#endif
         if (msg == (DWORD)AIMP_MSG_PROPERTY_EQUALIZER && p2) {
             if (p1 == AIMP_MSG_PROPVALUE_GET) *(INT32*)p2 = equalizer;
             else equalizer = *(INT32*)p2;
@@ -409,6 +419,134 @@ struct ConfigSvc : Obj<IAIMPServiceConfig> {
     HRESULT SetValueAsString(IAIMPString* k, IAIMPString* x) override { CheckMain(); v[K(k)] = K(x); return S_OK; }
     HRESULT FlushCache() override { return S_OK; }
 };
+
+#ifdef _WIN32
+// 2.8: AIMP's preferences for the switch without restart (src/win/LiveRate.h). The same window classes as AIMP
+// (TAIMPOptionsForm, TAIMPOptionsMenu, TAIMPOptionsFrameSoundOut, TAIMPOptionsFramePlugins, TACLComboBox,
+// TACLButton); the rate list draws its entries itself and has no window text, like AIMP's; Apply (Space on the
+// rightmost bottom button) writes the selected rate to AIMPSoundOut\DeviceFreq. Like AIMP, the window opens on the
+// page used last (Options\ActivePage, stored when it closes: 0 = Sound Output, 17 = Plugins), and Apply after the
+// Plugins page was shown makes AIMP 6 restart itself (counted in restarts).
+struct MockOptions {
+    ConfigSvc* config = nullptr;
+    std::vector<int> rates{8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000};
+    int sel = 0;
+    int opened = 0, applied = 0, visible = 0;  // visible: times the window came on screen
+    int restarts = 0;            // Apply after the Plugins page was shown
+    int activated = 0;           // times the window was activated (only allowed for the moment of Apply)
+    bool keep = false;           // WM_CLOSE only hides the window (an AIMP that keeps its preferences)
+    bool pluginsShown = false;   // the Plugins page was shown since the window was opened
+    HWND form = nullptr, menu = nullptr, page = nullptr, plugins = nullptr, list = nullptr;
+    int Current() {
+        auto it = config->v.find("AIMPSoundOut\\DeviceFreq");
+        return it == config->v.end() ? 0 : std::atoi(it->second.c_str());
+    }
+    void Show(bool sound) {  // switch the page (as a click in the menu)
+        ShowWindow(page, sound ? SW_SHOW : SW_HIDE);
+        ShowWindow(plugins, sound ? SW_HIDE : SW_SHOW);
+        if (!sound) pluginsShown = true;
+    }
+    void StorePage() { config->v["Options\\ActivePage"] = (GetWindowLongPtrW(plugins, GWL_STYLE) & WS_VISIBLE) ? "17" : "0"; }
+} g_opts;
+
+static LRESULT CALLBACK MockOptionsProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
+    wchar_t cls[64] = {0};
+    GetClassNameW(h, cls, 64);
+    std::wstring c = cls;
+    if (c == L"TAIMPOptionsForm") {
+        if (m == WM_CLOSE) {
+            g_opts.StorePage();
+            if (g_opts.keep) ShowWindow(h, SW_HIDE);
+            else DestroyWindow(h);
+            return 0;
+        }
+        if (m == WM_WINDOWPOSCHANGED && IsWindowVisible(h)) g_opts.visible++;
+        if (m == WM_ACTIVATE && LOWORD(wp) != WA_INACTIVE) g_opts.activated++;
+        if (m == WM_DESTROY) g_opts.form = g_opts.menu = g_opts.page = g_opts.plugins = g_opts.list = nullptr;
+    } else if (c == L"TACLComboBox" && h == g_opts.list) {
+        if (m == WM_KEYDOWN && wp == VK_UP && g_opts.sel > 0) g_opts.sel--;
+        if (m == WM_KEYDOWN && wp == VK_DOWN && g_opts.sel + 1 < (int)g_opts.rates.size()) g_opts.sel++;
+        if (m == WM_KEYDOWN) return 0;
+        if (m == WM_PRINT || m == WM_PAINT) {
+            PAINTSTRUCT ps;
+            HDC dc = m == WM_PRINT ? (HDC)wp : BeginPaint(h, &ps);
+            wchar_t t[32];
+            int n = wsprintfW(t, L"%d Hz", g_opts.rates[(size_t)g_opts.sel]);
+            ExtTextOutW(dc, 2, 2, 0, nullptr, t, (UINT)n, nullptr);
+            if (m == WM_PAINT) EndPaint(h, &ps);
+            return 0;
+        }
+    } else if (c == L"TAIMPOptionsMenu") {
+        if ((m == WM_KEYDOWN && wp == VK_HOME) || m == WM_LBUTTONDOWN) {  // first entry: Sound Output
+            g_opts.Show(true);
+            return 0;
+        }
+    } else if (c == L"TACLButton") {
+        if (m == WM_KEYUP && wp == VK_SPACE && GetWindowLongPtrW(h, GWLP_ID) == 3) {  // Apply
+            g_opts.applied++;
+            if (g_opts.pluginsShown) g_opts.restarts++;
+            g_opts.config->v["AIMPSoundOut\\DeviceFreq"] = std::to_string(g_opts.rates[(size_t)g_opts.sel]);
+            return 0;
+        }
+    }
+    return DefWindowProcW(h, m, wp, lp);
+}
+
+static bool g_noDisplay = false;
+// Wine without a display creates no top-level windows
+static bool CanCreateWindows() {
+    HWND w = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 10, 10, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (w) DestroyWindow(w);
+    return w != nullptr;
+}
+
+// AIMP_MSG_CMD_OPTIONS: opens the preferences on the page used last, or shows the kept window again (on the
+// page it shows)
+static void OpenMockOptions() {
+    static bool registered = false;
+    HINSTANCE hi = GetModuleHandleW(nullptr);
+    if (!registered) {
+        registered = true;
+        for (const wchar_t* n : {L"TAIMPOptionsForm", L"TAIMPOptionsMenu", L"TAIMPOptionsFrameSoundOut", L"TAIMPOptionsFramePlugins",
+                                 L"TACLComboBox", L"TACLButton"}) {
+            WNDCLASSW wc = {};
+            wc.lpfnWndProc = MockOptionsProc;
+            wc.hInstance = hi;
+            wc.lpszClassName = n;
+            RegisterClassW(&wc);
+        }
+    }
+    auto child = [&](HWND parent, const wchar_t* cls, int x, int y, int w, int hgt, int id) {
+        return CreateWindowExW(0, cls, L"", WS_CHILD | WS_VISIBLE, x, y, w, hgt, parent, (HMENU)(INT_PTR)id, hi, nullptr);
+    };
+    g_opts.opened++;
+    g_opts.pluginsShown = false;
+    if (!g_opts.form) {
+        g_opts.form = CreateWindowExW(0, L"TAIMPOptionsForm", L"Preferences", WS_OVERLAPPEDWINDOW, 100, 100, 800, 600,
+                                      nullptr, nullptr, hi, nullptr);
+        g_opts.menu = child(g_opts.form, L"TAIMPOptionsMenu", 0, 0, 180, 500, 10);
+        // all pages exist from the start, only the active one is visible
+        g_opts.plugins = child(g_opts.form, L"TAIMPOptionsFramePlugins", 190, 10, 590, 460, 30);
+        g_opts.page = child(g_opts.form, L"TAIMPOptionsFrameSoundOut", 190, 10, 590, 460, 20);
+        child(g_opts.page, L"TACLComboBox", 10, 10, 400, 22, 21);                // device (wide)
+        g_opts.list = child(g_opts.page, L"TACLComboBox", 10, 40, 120, 22, 22);  // rate
+        child(g_opts.page, L"TACLComboBox", 140, 40, 120, 22, 23);               // bit depth
+        child(g_opts.page, L"TACLComboBox", 270, 40, 120, 22, 24);               // channels
+        child(g_opts.form, L"TACLButton", 200, 480, 120, 26, 4);  // a button further up (e.g. "DSP Manager")
+        child(g_opts.form, L"TACLButton", 480, 530, 90, 26, 1);   // OK
+        child(g_opts.form, L"TACLButton", 580, 530, 90, 26, 2);   // Cancel
+        child(g_opts.form, L"TACLButton", 680, 530, 90, 26, 3);   // Apply
+        auto it = g_opts.config->v.find("Options\\ActivePage");
+        g_opts.Show(it == g_opts.config->v.end() || std::atoi(it->second.c_str()) == 0);
+    } else if (GetWindowLongPtrW(g_opts.plugins, GWL_STYLE) & WS_VISIBLE) {
+        g_opts.pluginsShown = true;
+    }
+    g_opts.sel = 0;  // the page shows AIMP's current rate
+    for (size_t i = 0; i < g_opts.rates.size(); i++)
+        if (g_opts.rates[i] == g_opts.Current()) g_opts.sel = (int)i;
+    ShowWindow(g_opts.form, SW_SHOW);
+}
+#endif
 
 struct MemStream : Obj<IAIMPMemoryStream> {
     std::string d;
@@ -1699,7 +1837,7 @@ static void QuickSwitchRun(CoreImpl* core, TAIMPPluginGetHeaderProc getHeader, c
     IniSet("Enabled", "0");
     IniSet("Language", "auto");
     IniSet("Mode", "0");
-    IniSet("RestartAimp", "0");
+    IniSet("LegacyRestart", "0");
     core->player->state = AIMP_PLAYER_STATE_STOPPED;
     int notes = core->disp->notifications;
     IAIMPPlugin* plugin = nullptr;
@@ -2137,7 +2275,7 @@ int main(int argc, char** argv) {
     CHECK(IniGet("Statistics", "Tracks") == "0");
     CHECK(IniGet("PreventResampling", "Enabled") == "0");  // defaults written, plugin off
     CHECK(!IniGet("Updates", "RunVersion").empty() && g_ui.message.shown == 0);  // new installation: no update notice
-    CHECK(IniGet("PreventResampling", "RestartAimp") == "0");
+    CHECK(IniGet("PreventResampling", "LegacyRestart") == "0" && IniGet("PreventResampling", "RestartAimp").empty());
     CHECK(core->menuItems.empty() && core->actions.empty());  // menus and hotkeys removed again
     CHECK(IniGet("PreventResampling", "MaxRate") == "0" && IniGet("PreventResampling", "SkipLossy") == "0" &&
           IniGet("PreventResampling", "MatchBitDepth") == "0");  // 2.7.0 defaults: nothing changes for an update
@@ -2230,21 +2368,98 @@ int main(int argc, char** argv) {
     }
     IniSet("Mode", "2");
     int stops0 = core->player->stops, plays0 = core->player->plays;
-    //  a) restart option off (default): nothing is changed, playback is not interrupted
+    //  a) 2.8 (default): AIMP's own rate changes without restart - invisibly, playback goes on
+    g_opts.config = core->config;
+    core->config->v["AIMPSoundOut\\DeviceFreq"] = "48000";
+    core->player->info->file = "C:\\Music\\live.flac";
+    auto logHas = [&](const std::string& t) { return ReadFile(dir + "/PreventResampling.log").find(t) != std::string::npos; };
+    auto aimpRate = [&] { return core->config->v["AIMPSoundOut\\DeviceFreq"]; };
+    IniSet("RestartAimp", "1");  // 2.7's experimental option does not switch the legacy method on
     plugin = nullptr;
     getHeader(&plugin);
     CHECK(Succeeded(plugin->Initialize(core)));
-    StartTrack(core, 96000);
-    CHECK(WaitUntil([&] { return ReadFile(dir + "/PreventResampling.log").find("restart option off") != std::string::npos; }));
-    WaitUntil([] { return false; }, 300);
-    CHECK(core->shutdown->calls == 0 && core->player->stops == stops0);
-    CHECK(Succeeded(plugin->Finalize()));
-    plugin->Release();
-    //  b) restart option on -> stop playback, write the resume file, start the helper, close AIMP
+    if (!CanCreateWindows()) {
+        // Wine without a display (CI without Xvfb) creates no top-level windows, so there are no preferences:
+        // the plugin gives up cleanly and AIMP keeps its rate
+        printf("NOTE: no display - the window part of the test without restart needs one (xvfb-run)\n");
+        StartTrack(core, 96000);
+        CHECK(WaitUntil([&] { return logHas("AIMP's rate stays at 48 kHz: AIMP's preferences did not open"); }, 8000));
+        CHECK(aimpRate() == "48000" && core->shutdown->calls == 0 && core->player->stops == stops0);
+        CHECK(Succeeded(plugin->Finalize()));
+        plugin->Release();
+        g_noDisplay = true;
+    } else {
+        // the user closed AIMP's preferences on the Plugins page last time: the plugin's window opens on Sound
+        // Output (Apply after the Plugins page would restart AIMP 6), the user's page is put back afterwards
+        core->config->v["Options\\ActivePage"] = "17";
+        StartTrack(core, 96000);
+        CHECK(WaitUntil([&] { return logHas("AIMP: 48 kHz -> 96 kHz without restart"); }, 8000));
+        CHECK(aimpRate() == "96000" && g_opts.applied == 1 && g_opts.opened == 1 && g_opts.restarts == 0);
+        CHECK(g_opts.visible == 0 && !g_opts.form);  // never on screen, closed again
+        CHECK(g_opts.activated <= 1);  // at most for the moment of Apply (the focus test is the live phase in real AIMP)
+        CHECK(core->config->v["Options\\ActivePage"] == "17");
+        CHECK(core->shutdown->calls == 0 && core->player->stops == stops0);
+        //     same rate again: nothing to do
+        StartTrack(core, 96000);
+        WaitUntil([] { return false; }, 500);
+        CHECK(g_opts.opened == 1);
+        //     an AIMP that keeps its preferences (hidden)
+        g_opts.keep = true;
+        StartTrack(core, 44100);
+        CHECK(WaitUntil([&] { return logHas("AIMP: 96 kHz -> 44.1 kHz without restart"); }, 8000));
+        CHECK(aimpRate() == "44100" && g_opts.applied == 2 && g_opts.visible == 0 && g_opts.form && !IsWindowVisible(g_opts.form));
+        StartTrack(core, 88200);  // the kept window again
+        CHECK(WaitUntil([&] { return logHas("AIMP: 44.1 kHz -> 88.2 kHz without restart"); }, 8000));
+        CHECK(aimpRate() == "88200" && g_opts.applied == 3 && g_opts.opened == 3 && g_opts.visible == 0);
+        //     the kept window shows another page (the start page does not apply to it): nothing is pressed
+        g_opts.Show(false);
+        StartTrack(core, 96000);
+        CHECK(WaitUntil([&] { return logHas("AIMP's rate stays at 88.2 kHz: AIMP's preferences opened on another page"); }, 8000));
+        CHECK(aimpRate() == "88200" && g_opts.applied == 3 && g_opts.restarts == 0 && g_opts.visible == 0);
+        CHECK(core->config->v["Options\\ActivePage"] == "17");
+        //     the user has AIMP's preferences open: they are not touched until they are closed
+        g_opts.keep = false;
+        core->disp->Send(AIMP_MSG_CMD_OPTIONS, 0, nullptr);
+        int shown = g_opts.visible;
+        CHECK(shown > 0 && g_opts.form && IsWindowVisible(g_opts.form));
+        StartTrack(core, 96000);
+        CHECK(WaitUntil([&] { return logHas("AIMP's preferences are open - AIMP's rate follows when they are closed"); }));
+        WaitUntil([] { return false; }, 300);
+        CHECK(aimpRate() == "88200" && g_opts.applied == 3);
+        SendMessageW(g_opts.form, WM_CLOSE, 0, 0);
+        CHECK(!g_opts.form);
+        core->disp->hook->CoreMessage(AIMP_MSG_EVENT_PLAYER_UPDATE_POSITION, 0, nullptr, nullptr);
+        CHECK(WaitUntil([&] { return logHas("Output changed (AIMP's preferences closed)"); }));
+        CHECK(WaitUntil([&] { return logHas("AIMP: 88.2 kHz -> 96 kHz without restart"); }, 8000));
+        CHECK(g_opts.visible == shown && aimpRate() == "96000" && g_opts.restarts == 0);
+        CHECK(core->config->v["Options\\ActivePage"] == "17");  // the page the user closed them on
+        //     a device that offers only a few rates (e.g. HDMI: 32, 44.1, 48 kHz): the best of them
+        std::string out0 = core->player->output;
+        core->player->output = "WASAPI Exclusive (Push): HDMI Monitor";
+        g_opts.rates = {32000, 44100, 48000};
+        core->config->v["AIMPSoundOut\\DeviceFreq"] = "44100";
+        StartTrack(core, 192000);
+        CHECK(WaitUntil([&] { return logHas("AIMP: 44.1 kHz -> 48 kHz without restart"); }, 8000));
+        CHECK(aimpRate() == "48000");
+        int opened = g_opts.opened;
+        StartTrack(core, 96000);  // AIMP's list is known now: 48 kHz is the best it offers, no window needed
+        WaitUntil([] { return false; }, 500);
+        CHECK(g_opts.opened == opened && aimpRate() == "48000");
+        StartTrack(core, 44100);
+        CHECK(WaitUntil([&] { return logHas("AIMP: 48 kHz -> 44.1 kHz without restart"); }, 8000));
+        CHECK(g_opts.visible == shown && g_opts.restarts == 0);
+        CHECK(Succeeded(plugin->Finalize()));
+        plugin->Release();
+        CHECK(IniGet("Statistics", "AimpRateChanges") == "6");
+        CHECK(core->shutdown->calls == 0 && core->player->stops == stops0);
+        core->player->output = out0;
+        g_opts.rates = MockOptions().rates;
+    }
+    //  b) legacy option (restart AIMP) -> stop playback, write the resume file, start the helper, close AIMP
     //     (do not keep playing). The helper (rundll32) waits for this process to end, writes 96000
     //     to AIMP.ini and starts MockHost.exe without arguments (prints usage only) - the CI script
     //     checks that afterwards.
-    IniSet("RestartAimp", "1");
+    IniSet("LegacyRestart", "1");
     plugin = nullptr;
     getHeader(&plugin);
     CHECK(Succeeded(plugin->Initialize(core)));
@@ -2277,7 +2492,7 @@ int main(int argc, char** argv) {
     plugin->Release();
     CHECK(IniGet("Session", "Saved") == "");
     IniSet("Mode", "0");
-    IniSet("RestartAimp", "0");
+    IniSet("LegacyRestart", "0");
     QuickSwitchRun(core, getHeader, dir);
     SettingsTakeOver(core, getHeader, dir);
     g_ui.reg.Clear();  // before unloading: the controls hold the plugin's event handlers
@@ -2517,5 +2732,8 @@ int main(int argc, char** argv) {
     dlclose(lib);
 #endif
     printf(g_failures ? "%d check(s) failed\n" : "All checks passed\n", g_failures);
+#ifdef _WIN32
+    if (g_noDisplay) printf("(without a display: the window part of the test without restart was not run)\n");
+#endif
     return g_failures ? 1 : 0;
 }

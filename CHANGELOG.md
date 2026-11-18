@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.8.0
+
+New:
+- ASIO, WASAPI exclusive and DirectSound now follow the track without restarting AIMP. AIMP plays these outputs with its own fixed rate (Preferences → Sound Output); the plugin changes that rate for every track the way you would - pick the rate on AIMP's Sound Output page and press Apply - but invisibly in the background and in well under a second, without editing AIMP.ini. The devices behind AIMP come first (Voicemeeter's engine rate and its A1-A5 devices, the Windows device for DirectSound), then AIMP's rate, and then the plugin checks AIMP's setting. Playback goes on (it only stops for a moment when devices behind AIMP change, as in WASAPI shared mode). Always on while the plugin is enabled on the General tab - nothing to set up
+- Only rates AIMP offers for the device are used: the plugin reads AIMP's own rate list for the output. If the device cannot play the track's rate, AIMP gets the best rate it offers - a multiple of the track's rate or the next lower rate of the same family (192 → 96 → 48 kHz); with WASAPI exclusive the device is asked as well
+- Voicemeeter Virtual ASIO runs at Voicemeeter's engine rate, so AIMP has to use exactly that rate: the plugin checks both after the switch. If AIMP cannot take the new rate, the devices go back to AIMP's rate, so music never plays too fast or too slow
+- While AIMP's preferences are open, the plugin does not touch them; AIMP's rate follows as soon as you close them. The program you work in keeps the focus, and AIMP's preferences still open on the page you used last
+- Advanced tab: "AIMP rate changes" counts the changes without restart
+
+Changed:
+- The experimental AIMP restart of earlier versions is now the legacy method on the ASIO / Exclusive tab ("Restart AIMP instead"). It is off by default, also after an update from a version where the old option was ticked; while it is ticked, it replaces the new method
+- The message after an update no longer says that AIMP was restarted (it is also shown when the plugin file was copied by hand)
+
 ## 2.7.0
 
 New:

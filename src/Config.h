@@ -17,8 +17,8 @@ enum class OutputMode : int {
     DirectSound = 6,  // Windows: DirectSound -> Windows default format + AIMP's own rate
 };
 
-// Outputs where AIMP plays with its own fixed rate (AIMPSoundOut\DeviceFreq) and therefore
-// only follows the track if AIMP is restarted
+// Outputs where AIMP plays with its own fixed rate (AIMPSoundOut\DeviceFreq): AIMP only follows the track
+// if that setting changes (2.8: on the fly, see win/LiveRate.h; legacy: by restarting AIMP)
 inline bool NeedsAimpRestart(OutputMode m) {
     return m == OutputMode::Exclusive || m == OutputMode::Asio || m == OutputMode::DirectSound;
 }
@@ -48,9 +48,11 @@ struct Config {
     // Windows shared mode: the device format follows the track's bit depth too (Output tab, off by default)
     bool matchBitDepth = false;
 
-    // Experimental: restart AIMP so it plays with the new rate (ASIO / WASAPI exclusive / DirectSound)
-    bool restartAimp = false;
-    bool seamlessRestart = true;    // show a still image of AIMP while it restarts
+    // ASIO / WASAPI exclusive / DirectSound: since 2.8 AIMP's own rate is changed on the fly (always, while
+    // the plugin is enabled). Legacy: restart AIMP with the new rate instead (the method of 2.5-2.7; own key,
+    // so the old "RestartAimp" of 2.7 does not switch it on)
+    bool legacyRestart = false;
+    bool seamlessRestart = true;    // legacy: show a still image of AIMP while it restarts
 
     // Bit-perfect mode (Output tab): switches off everything in AIMP that changes the signal and
     // restores it when switched off again (see BitPerfect.h)
@@ -100,7 +102,7 @@ struct Config {
         skipLossy = i.Bool(s, AR_T("SkipLossy"), skipLossy);
         skipList = i.Str(s, AR_T("SkipFoldersPlaylists"), skipList);
         matchBitDepth = i.Bool(s, AR_T("MatchBitDepth"), matchBitDepth);
-        restartAimp = i.Bool(s, AR_T("RestartAimp"), restartAimp);
+        legacyRestart = i.Bool(s, AR_T("LegacyRestart"), legacyRestart);
         seamlessRestart = i.Bool(s, AR_T("SeamlessRestart"), seamlessRestart);
         bitPerfect = i.Bool(s, AR_T("BitPerfect"), bitPerfect);
         bpVolume100 = i.Bool(s, AR_T("BitPerfectVolume100"), bpVolume100);
@@ -131,7 +133,8 @@ struct Config {
         i.SetBool(s, AR_T("SkipLossy"), skipLossy);
         i.Set(s, AR_T("SkipFoldersPlaylists"), skipList);
         i.SetBool(s, AR_T("MatchBitDepth"), matchBitDepth);
-        i.SetBool(s, AR_T("RestartAimp"), restartAimp);
+        i.SetBool(s, AR_T("LegacyRestart"), legacyRestart);
+        i.Remove(s, AR_T("RestartAimp"));  // 2.7's experimental option, replaced by the method without restart
         i.SetBool(s, AR_T("SeamlessRestart"), seamlessRestart);
         i.SetBool(s, AR_T("BitPerfect"), bitPerfect);
         i.SetBool(s, AR_T("BitPerfectVolume100"), bpVolume100);

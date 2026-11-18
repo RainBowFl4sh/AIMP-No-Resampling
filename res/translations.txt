@@ -248,35 +248,44 @@ ALSA напрямую (нечего переключать)
 ALSA напряму (нічого перемикати)
 
 # --- ASIO / Exclusive
-EXPERIMENTAL – please read before enabling
-EXPERIMENTELL – bitte vor dem Einschalten lesen
-ЭКСПЕРИМЕНТАЛЬНО – прочитайте перед включением
-ЕКСПЕРИМЕНТАЛЬНО – прочитайте перед увімкненням
 
-With ASIO, WASAPI exclusive (event/push) and DirectSound, AIMP plays with its own fixed rate (Preferences → Sound Output) and reads it only at start-up. The only way to follow the track is a workaround: stop playback, close AIMP, write the new rate into AIMP.ini, start AIMP again and continue at the same position.
-Mit ASIO, WASAPI exklusiv (Event/Push) und DirectSound spielt AIMP mit einer festen Rate (Einstellungen → Tonausgabe), die es nur beim Start liest. Folgen geht nur über einen Umweg: Wiedergabe stoppen, AIMP schließen, neue Rate in AIMP.ini schreiben, AIMP starten und an derselben Stelle weiterspielen.
-С ASIO, WASAPI монопольным (event/push) и DirectSound AIMP играет со своей фиксированной частотой (Настройки → Вывод звука) и читает её только при запуске. Обходной путь: остановить, закрыть AIMP, записать частоту в AIMP.ini, запустить AIMP и продолжить с того же места.
-З ASIO, WASAPI монопольним (event/push) і DirectSound AIMP грає зі своєю фіксованою частотою (Налаштування → Виведення звуку) і читає її лише під час запуску. Обхідний шлях: зупинити, закрити AIMP, записати частоту в AIMP.ini, запустити AIMP і продовжити з того самого місця.
 
-Expect a short interruption on every rate change. In rare cases AIMP may not come back by itself or settings may be lost – keep a backup of AIMP.ini. Use at your own risk.
-Bei jedem Ratenwechsel gibt es eine kurze Unterbrechung. Selten startet AIMP nicht von selbst neu oder Einstellungen gehen verloren – sichere AIMP.ini. Nutzung auf eigene Gefahr.
-Каждая смена частоты даёт короткий перерыв. Изредка AIMP может не запуститься сам или настройки потеряются – сохраните копию AIMP.ini. На свой риск.
-Кожна зміна частоти дає коротку перерву. Зрідка AIMP може не запуститися сам або налаштування втратяться – збережіть копію AIMP.ini. На власний ризик.
 
-Restart AIMP to apply the track's sample rate
-AIMP neu starten, um die Rate des Titels zu übernehmen
-Перезапускать AIMP для частоты трека
-Перезапускати AIMP для частоти треку
+AIMP's own output rate
+AIMPs eigene Ausgaberate
+Собственная частота вывода AIMP
+Власна частота виведення AIMP
+
+With ASIO, WASAPI exclusive and DirectSound, AIMP plays with its own fixed rate (Preferences → Sound Output). The plugin changes it for every track without restarting AIMP: first the devices behind AIMP (Voicemeeter, the Windows device), then AIMP's rate – invisibly in the background – and then it checks the result. While AIMP's preferences are open, it waits until you close them.
+Mit ASIO, WASAPI exklusiv und DirectSound spielt AIMP mit einer eigenen festen Rate (Einstellungen → Tonausgabe). Das Plugin stellt sie für jeden Titel ohne AIMP-Neustart um: zuerst die Geräte hinter AIMP (Voicemeeter, das Windows-Gerät), dann AIMPs Rate – unsichtbar im Hintergrund – und prüft danach das Ergebnis. Solange AIMPs Einstellungen offen sind, wartet es, bis du sie schließt.
+С ASIO, WASAPI монопольным и DirectSound AIMP играет со своей фиксированной частотой (Настройки → Вывод звука). Плагин меняет её для каждого трека без перезапуска AIMP: сначала устройства за AIMP (Voicemeeter, устройство Windows), затем частоту AIMP – незаметно в фоне – и проверяет результат. Пока настройки AIMP открыты, он ждёт, пока вы их закроете.
+З ASIO, WASAPI монопольним і DirectSound AIMP грає зі своєю фіксованою частотою (Налаштування → Виведення звуку). Плагін змінює її для кожного треку без перезапуску AIMP: спочатку пристрої за AIMP (Voicemeeter, пристрій Windows), потім частоту AIMP – непомітно у фоні – і перевіряє результат. Поки налаштування AIMP відкриті, він чекає, доки ви їх закриєте.
+
+With ASIO, WASAPI exclusive and DirectSound, AIMP plays with its own fixed rate (Preferences → Sound Output). The plugin changes it for every track without restarting AIMP: first the devices behind AIMP (e.g. the Windows device), then AIMP's rate – invisibly in the background – and then it checks the result. While AIMP's preferences are open, it waits until you close them.
+Mit ASIO, WASAPI exklusiv und DirectSound spielt AIMP mit einer eigenen festen Rate (Einstellungen → Tonausgabe). Das Plugin stellt sie für jeden Titel ohne AIMP-Neustart um: zuerst die Geräte hinter AIMP (z. B. das Windows-Gerät), dann AIMPs Rate – unsichtbar im Hintergrund – und prüft danach das Ergebnis. Solange AIMPs Einstellungen offen sind, wartet es, bis du sie schließt.
+С ASIO, WASAPI монопольным и DirectSound AIMP играет со своей фиксированной частотой (Настройки → Вывод звука). Плагин меняет её для каждого трека без перезапуска AIMP: сначала устройства за AIMP (например, устройство Windows), затем частоту AIMP – незаметно в фоне – и проверяет результат. Пока настройки AIMP открыты, он ждёт, пока вы их закроете.
+З ASIO, WASAPI монопольним і DirectSound AIMP грає зі своєю фіксованою частотою (Налаштування → Виведення звуку). Плагін змінює її для кожного треку без перезапуску AIMP: спочатку пристрої за AIMP (наприклад, пристрій Windows), потім частоту AIMP – непомітно у фоні – і перевіряє результат. Поки налаштування AIMP відкриті, він чекає, доки ви їх закриєте.
+
+Legacy method
+Alte Methode (Legacy)
+Старый способ (legacy)
+Старий спосіб (legacy)
+
+Restart AIMP instead (method of earlier versions)
+Stattdessen AIMP neu starten (Methode früherer Versionen)
+Вместо этого перезапускать AIMP (как в прежних версиях)
+Замість цього перезапускати AIMP (як у попередніх версіях)
+
+Stops playback, closes AIMP, writes the new rate into AIMP.ini, starts AIMP again and continues at the same position – a short interruption on every rate change. Only if the new way does not work for you; while ticked, it replaces it.
+Stoppt die Wiedergabe, schließt AIMP, schreibt die neue Rate in AIMP.ini, startet AIMP neu und spielt an derselben Stelle weiter – bei jedem Ratenwechsel eine kurze Unterbrechung. Nur, wenn der neue Weg bei dir nicht klappt; solange angehakt, ersetzt es ihn.
+Останавливает воспроизведение, закрывает AIMP, записывает частоту в AIMP.ini, запускает AIMP и продолжает с того же места – короткий перерыв при каждой смене частоты. Только если новый способ у вас не работает; пока включено, заменяет его.
+Зупиняє відтворення, закриває AIMP, записує частоту в AIMP.ini, запускає AIMP і продовжує з того самого місця – коротка перерва при кожній зміні частоти. Лише якщо новий спосіб у вас не працює; поки увімкнено, замінює його.
 
 Seamless restart (show a still image of AIMP meanwhile)
 Nahtloser Neustart (solange ein Standbild von AIMP zeigen)
 Плавный перезапуск (пока показывать снимок AIMP)
 Плавний перезапуск (поки показувати знімок AIMP)
 
-While this is off, the plugin does not follow the track on these outputs; it only keeps Voicemeeter at AIMP's own rate. WASAPI shared never needs a restart.
-Solange das aus ist, folgt das Plugin dem Titel auf diesen Ausgaben nicht; es hält nur Voicemeeter auf AIMPs eigener Rate. WASAPI geteilt braucht nie einen Neustart.
-Пока это выключено, плагин не следует за треком на этих выходах; он только держит Voicemeeter на частоте AIMP. WASAPI общий никогда не требует перезапуска.
-Поки це вимкнено, плагін не слідує за треком на цих виходах; він лише тримає Voicemeeter на частоті AIMP. WASAPI спільний ніколи не потребує перезапуску.
 
 ASIO driver:
 ASIO-Treiber:
@@ -576,6 +585,11 @@ AIMP-Neustarts:
 Перезапусков AIMP:
 Перезапусків AIMP:
 
+AIMP rate changes:
+AIMP-Ratenwechsel:
+Смены частоты AIMP:
+Зміни частоти AIMP:
+
 Switch time:
 Umschaltzeit:
 Время переключения:
@@ -793,10 +807,10 @@ Prüfsumme stimmt nicht - der Download wurde verworfen.
 %1 для AIMP обновлён до версии %2.
 %1 для AIMP оновлено до версії %2.
 
-AIMP restarted to load the new version. The changes are on the About tab: Preferences → Plugins → %1 → About.
-AIMP wurde neu gestartet, um die neue Version zu laden. Die Änderungen stehen im Tab Über: Einstellungen → Plugins → %1 → Über.
-AIMP перезапущен, чтобы загрузить новую версию. Изменения – на вкладке «Инфо»: Настройки → Плагины → %1 → Инфо.
-AIMP перезапущено, щоб завантажити нову версію. Зміни – на вкладці «Інфо»: Налаштування → Плагіни → %1 → Інфо.
+The changes are on the About tab: Preferences → Plugins → %1 → About.
+Die Änderungen stehen im Tab Über: Einstellungen → Plugins → %1 → Über.
+Изменения – на вкладке «Инфо»: Настройки → Плагины → %1 → Инфо.
+Зміни – на вкладці «Інфо»: Налаштування → Плагіни → %1 → Інфо.
 
 # --- 2.7.0: quick switch (AIMP's menus and hotkeys)
 Enabled

@@ -259,6 +259,35 @@ public:
         return d;
     }
 
+    // 2.8 (ASIO / WASAPI exclusive / DirectSound, AIMP's rate changed on the fly): the rates AIMP itself should
+    // play with, best first. Devices the plugin switches for this output (Voicemeeter, DirectSound's device,
+    // extra devices) run at d.rate, and AIMP has to take exactly that rate - with Voicemeeter's ASIO driver a
+    // different rate even plays at the wrong speed. Otherwise AIMP opens the device itself: the track's rate,
+    // its multiples, then lower rates of the same family (192 -> 96 -> 48 kHz) for a device that cannot play
+    // the track's rate. WASAPI exclusive: the device is asked which of them it supports (unknown = try).
+    std::vector<uint32_t> LiveRates(const Decision& d, uint32_t hz) const {
+        if (!d.rate) return {};
+        if (d.vm && !d.vmEngine && d.mode == OutputMode::Asio) {  // Voicemeeter's ASIO driver runs at its engine rate
+            uint32_t e = win::Voicemeeter::Get().EngineRate();
+            if (e) return {e};
+        }
+        if (!d.targets.empty() || d.vm || d.asioDirect) return {d.rate};
+        std::vector<uint32_t> c = Candidates(hz);
+        uint32_t base = (hz % 44100 == 0) ? 44100 : (hz % 48000 == 0) ? 48000 : 0;
+        if (base)
+            for (uint32_t r = hz / 2; r >= base && r % base == 0; r /= 2) c.push_back(r);
+        if (d.mode == OutputMode::Exclusive && !d.aimpId.empty()) {
+            WAVEFORMATEXTENSIBLE f;
+            if (win::GetDeviceFormat(d.aimpId, f)) {
+                std::vector<uint32_t> ok;
+                for (uint32_t r : c)
+                    if (win::SupportsExclusive(d.aimpId, win::WithRate(f, r)) != 0) ok.push_back(r);
+                if (!ok.empty()) c = ok;
+            }
+        }
+        return c;
+    }
+
     // New default format of target i: the chosen rate, and the bit depth if it follows the track
     static WAVEFORMATEXTENSIBLE Target(const WAVEFORMATEXTENSIBLE& cur, const Decision& d, size_t i) {
         WAVEFORMATEXTENSIBLE f = win::WithRate(cur, d.rate);

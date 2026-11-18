@@ -574,22 +574,28 @@ public:
         // U2: is the way to the device bit-perfect right now, and the audio chain with every step
         if (o) chainPanel_.reset(new ChainPanel(ui_.Get(), form_.Get(), o, 10, y - 6, 455));
 
-        // --- ASIO / Exclusive (experimental restart)
+        // --- ASIO / Exclusive: AIMP's own rate (2.8: changed without restart; legacy: AIMP restart)
 #ifdef _WIN32
         IAIMPUIWinControl* x = Page(AR_T("Exclusive"), "ASIO / Exclusive");
         y = 8;
-        Label(x, "EXPERIMENTAL – please read before enabling", 10, y, 455, 18, true);                   y += 24;
-        Label(x, "With ASIO, WASAPI exclusive (event/push) and DirectSound, AIMP plays with its own fixed "
-                 "rate (Preferences → Sound Output) and reads it only at start-up. The only way to follow "
-                 "the track is a workaround: stop playback, close AIMP, write the new rate into AIMP.ini, "
-                 "start AIMP again and continue at the same position.", 10, y, 455, 82);                     y += 88;
-        Label(x, "Expect a short interruption on every rate change. In rare cases AIMP may not come back by "
-                 "itself or settings may be lost – keep a backup of AIMP.ini. Use at your own risk.",
-              10, y, 455, 50, true);                                                                         y += 58;
-        cbRestart_ = Check(x, "Restart AIMP to apply the track's sample rate", 10, y, 455);                  y += 24;
+        Label(x, "AIMP's own output rate", 10, y, 455, 18, true);                                          y += 24;
+        Label(x, vmInstalled
+                     ? "With ASIO, WASAPI exclusive and DirectSound, AIMP plays with its own fixed rate (Preferences "
+                       "→ Sound Output). The plugin changes it for every track without restarting AIMP: first the "
+                       "devices behind AIMP (Voicemeeter, the Windows device), then AIMP's rate – invisibly in the "
+                       "background – and then it checks the result. While AIMP's preferences are open, it waits "
+                       "until you close them."
+                     : "With ASIO, WASAPI exclusive and DirectSound, AIMP plays with its own fixed rate (Preferences "
+                       "→ Sound Output). The plugin changes it for every track without restarting AIMP: first the "
+                       "devices behind AIMP (e.g. the Windows device), then AIMP's rate – invisibly in the "
+                       "background – and then it checks the result. While AIMP's preferences are open, it waits "
+                       "until you close them.", 10, y, 455, 98);                                             y += 106;
+        Label(x, "Legacy method", 10, y, 455, 18, true);                                                    y += 24;
+        cbRestart_ = Check(x, "Restart AIMP instead (method of earlier versions)", 10, y, 455);              y += 24;
         cbSeamless_ = Check(x, "Seamless restart (show a still image of AIMP meanwhile)", 28, y, 437);       y += 26;
-        Label(x, "While this is off, the plugin does not follow the track on these outputs; it only keeps "
-                 "Voicemeeter at AIMP's own rate. WASAPI shared never needs a restart.", 10, y, 455, 50);    y += 56;
+        Label(x, "Stops playback, closes AIMP, writes the new rate into AIMP.ini, starts AIMP again and continues "
+                 "at the same position – a short interruption on every rate change. Only if the new way does not "
+                 "work for you; while ticked, it replaces it.", 10, y, 455, 66);                             y += 72;
         Label(x, "ASIO driver:", 10, y + 3, 195);
         coAsio_ = Combo(x, 210, y, 255);                                                                     y += 30;
         cbAsioForce_ = Check(x, "Set the ASIO driver's rate directly (only if AIMP does not)", 10, y, 455);
@@ -874,7 +880,7 @@ public:
         SelectName(coWinDev_.Get(), winDevices_, c.windowsDevice);
         SelectName(coAsio_.Get(), asioDrivers_, c.asioDriver);
         SetText(edExtra_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT, c.extraDevices);
-        SetChecked(cbRestart_.Get(), c.restartAimp);
+        SetChecked(cbRestart_.Get(), c.legacyRestart);
         SetChecked(cbSeamless_.Get(), c.seamlessRestart);
         SetChecked(cbAsioForce_.Get(), c.asioForce);
         SetChecked(cbVm_.Get(), c.vmEnabled);
@@ -922,7 +928,7 @@ public:
         i = Index(coAsio_.Get());
         c.asioDriver = (i > 0 && i <= (int)asioDrivers_.size()) ? asioDrivers_[i - 1] : tstring();
         c.extraDevices = Trim(GetText(edExtra_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT));
-        c.restartAimp = Checked(cbRestart_.Get());
+        c.legacyRestart = Checked(cbRestart_.Get());
         c.seamlessRestart = Checked(cbSeamless_.Get());
         c.asioForce = Checked(cbAsioForce_.Get());
         c.vmEnabled = Checked(cbVm_.Get());
@@ -940,6 +946,11 @@ public:
     }
 
     void Save() {
+#ifdef _WIN32
+        // AIMP's preferences opened invisibly by the plugin to change AIMP's rate (win/LiveRate.h): "Apply"
+        // saves every page - this one has nothing new, and must not change anything
+        if (win::LiveRate::Running()) return;
+#endif
         Config c = FromControls();
         bool wasEnabled = engine_->cfg.enabled;
         engine_->cfg = c;

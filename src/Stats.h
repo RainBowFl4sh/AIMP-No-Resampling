@@ -17,7 +17,8 @@ public:
     long skipped = 0;         // rate already matched
     long failures = 0;        // no rate found or error
     long vmRestarts = 0;      // Voicemeeter engine restarts
-    long aimpRestarts = 0;    // AIMP restarts for a new output rate
+    long aimpRestarts = 0;    // AIMP restarts for a new output rate (legacy option)
+    long aimpLive = 0;        // 2.8: AIMP's own rate changed without restart
     int64_t switchMsTotal = 0;
     std::map<uint32_t, long> rates;  // sample rates of played tracks
 
@@ -50,7 +51,7 @@ public:
 
     void ResetCounters() {
         std::lock_guard<std::mutex> g(m_);
-        tracks = switches = skipped = failures = vmRestarts = aimpRestarts = 0;
+        tracks = switches = skipped = failures = vmRestarts = aimpRestarts = aimpLive = 0;
         switchMsTotal = lastSwitchMs = 0;
         rates.clear();
     }
@@ -61,7 +62,7 @@ public:
 private:
     void Assign(const Stats& o) {
         tracks = o.tracks; switches = o.switches; skipped = o.skipped; failures = o.failures;
-        vmRestarts = o.vmRestarts; aimpRestarts = o.aimpRestarts; switchMsTotal = o.switchMsTotal; rates = o.rates;
+        vmRestarts = o.vmRestarts; aimpRestarts = o.aimpRestarts; aimpLive = o.aimpLive; switchMsTotal = o.switchMsTotal; rates = o.rates;
         lastSwitchMs = o.lastSwitchMs; trackRate = o.trackRate; trackBits = o.trackBits;
         trackChannels = o.trackChannels; deviceRate = o.deviceRate; aimpRate = o.aimpRate;
         trackCodec = o.trackCodec; aimpOutput = o.aimpOutput; modeText = o.modeText; chainText = o.chainText;
@@ -112,7 +113,10 @@ public:
         row("Already matching:", Num(skipped));
         row("Failed:", Num(failures));
         if (!vmText.empty() || vmRestarts) row("Voicemeeter restarts:", Num(vmRestarts));
-        row("AIMP restarts:", Num(aimpRestarts));
+#ifdef _WIN32
+        row("AIMP rate changes:", Num(aimpLive));
+#endif
+        if (aimpRestarts) row("AIMP restarts:", Num(aimpRestarts));
         if (switches)
             row("Switch time:", Trf("%1 ms (last), %2 ms (average)", {Num(lastSwitchMs), Num(switchMsTotal / switches)}));
 

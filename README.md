@@ -2,7 +2,7 @@
 
 **Prevent Resampling** is an AIMP plugin by **Fl4sh** that switches your audio output to the **sample rate of every track**. A 44.1 kHz album plays at 44.1 kHz, a 96 kHz album at 96 kHz: Windows, Voicemeeter and your DAC follow the music, and nothing gets resampled on the way.
 
-It works with **WASAPI shared**, **Voicemeeter** (engine rate and the Windows format of all hardware outputs A1–A5) and, with an optional experimental AIMP restart, **ASIO**, **WASAPI exclusive** and **DirectSound** on Windows, plus **PipeWire** on Linux (there it currently keeps PipeWire at AIMP's own rate — see [Known limitations](#known-limitations)). Everything is set up directly in AIMP under *Preferences → Plugins → Prevent Resampling*; AIMP's menu and hotkeys switch it on and off, and the **audio chain** window shows the whole way of the playing track from the file to your headphones, with every step that changes the signal. Supported: **AIMP 4.70, 5 and 6** (Windows 32/64 bit, AIMP 6 also on Linux).
+It works with **WASAPI shared**, **Voicemeeter** (engine rate and the Windows format of all hardware outputs A1–A5), **ASIO**, **WASAPI exclusive** and **DirectSound** on Windows (there it changes AIMP's own output rate on the fly, without restarting AIMP), plus **PipeWire** on Linux (there it currently keeps PipeWire at AIMP's own rate — see [Known limitations](#known-limitations)). Everything is set up directly in AIMP under *Preferences → Plugins → Prevent Resampling*; AIMP's menu and hotkeys switch it on and off, and the **audio chain** window shows the whole way of the playing track from the file to your headphones, with every step that changes the signal. Supported: **AIMP 4.70, 5 and 6** (Windows 32/64 bit, AIMP 6 also on Linux).
 
 <p align="center">
   <img src="docs/screenshots/chain-bit-perfect.png" width="300" alt="Audio chain window: bit-perfect">
@@ -73,7 +73,7 @@ If you like the plugin and want to say thanks: [Support it via PayPal](https://w
 2. **General:** read the warning and tick *Enable Prevent Resampling*.
 3. **Output:** leave *Output type* on *Automatic*. The plugin reads AIMP's output device and knows what to switch.
 4. **Voicemeeter users:** tick *Auto restart audio engine (all devices)* in Voicemeeter's own settings (see [Voicemeeter](#voicemeeter)).
-5. **ASIO / WASAPI exclusive / DirectSound users:** these outputs only follow the track with the experimental AIMP restart. Read the [ASIO / Exclusive](#asio--exclusive) section before you enable it.
+5. **ASIO / WASAPI exclusive / DirectSound users:** nothing to set up — the plugin changes AIMP's own rate for every track (see [ASIO / Exclusive](#asio--exclusive)).
 6. Play some music and scroll down the *Output* tab to the status and the [audio chain](#audio-chain): *Bit-perfect* means the samples of the file reach your device unchanged. If not, it tells you what changes them. The *Advanced* tab has the details and the log.
 
 ## The settings page
@@ -108,20 +108,22 @@ The page uses AIMP's own controls, so it follows your skin and works on Windows 
 
 <img src="docs/screenshots/settings-asio-exclusive.png" width="640" alt="ASIO / Exclusive tab">
 
-> [!CAUTION]
-> **This option is a workaround. It is off by default, and you use it at your own risk.**
-> With ASIO, WASAPI exclusive (event / push) and DirectSound, AIMP plays with its **own fixed rate** (`AIMPSoundOut\DeviceFreq` in `AIMP.ini`). AIMP reads it **only at start-up** and gives plugins no way to change it. The only way to follow the track is to **close AIMP, change its configuration file and start it again**, on every rate change. Expect a short interruption each time. In rare cases AIMP may not come back by itself or settings may be lost. **Keep a backup of `AIMP.ini`.**
+With ASIO, WASAPI exclusive (event / push) and DirectSound, AIMP plays with its **own fixed rate** (*Preferences → Sound Output*, `AIMPSoundOut\DeviceFreq` in `AIMP.ini`), and AIMP gives plugins no way to change it. Since 2.8 the plugin changes it anyway, **without restarting AIMP** — the same way you would do it by hand:
 
-What happens with **Restart AIMP to apply the track's sample rate** turned on:
+1. If devices behind AIMP have to change, they go first: Voicemeeter's engine rate and its hardware outputs A1–A5, or the Windows device for DirectSound (playback pauses for a moment then, as in WASAPI shared mode).
+2. The plugin opens AIMP's preferences **invisibly** in the background (no window, no taskbar button, no focus change) on the *Sound Output* page (when you open them yourself, they still show the page you used last), reads AIMP's rate list for the output, picks the track's rate, presses *Apply* and closes them again. AIMP changes its output on the fly. This takes well under a second; `AIMP.ini` is not edited.
+3. It checks AIMP's setting afterwards. With *Voicemeeter Virtual ASIO*, AIMP and Voicemeeter's engine must run at exactly the same rate, otherwise the music plays too fast or too slow: the plugin compares them, and if AIMP could not take the new rate, the devices go back to AIMP's rate.
+
+Only rates that AIMP offers for the device are used. If the device cannot play the track's rate, AIMP gets the best rate it offers: an integer multiple of the track's rate, or the next lower rate of the same family (192 → 96 → 48 kHz). While **AIMP's preferences are open** on your screen, the plugin does not touch them; AIMP's rate follows as soon as you close them. This is always on while the plugin is enabled.
+
+**Legacy method — Restart AIMP instead** (off by default): the method of earlier versions, for set-ups where the new way does not work. While ticked, it replaces the new method:
 
 1. The plugin stops playback and remembers the track and the position.
 2. It starts a small helper (`rundll32 PreventResampling.dll,RestartAimp …`) and closes AIMP. Windows and Voicemeeter keep the new rate.
 3. The helper waits until AIMP has exited, writes the new rate into `AIMP.ini` (keeping the file's encoding) and starts AIMP again.
 4. The track continues at the same position. A safety check prevents restart loops if AIMP does not take the new rate.
 
-**Seamless restart**: right before AIMP closes, the helper takes a still image of AIMP's windows and shows it in exactly the same place, so AIMP seems to stay open. The image fades out as soon as the new AIMP window is on screen. Audio still pauses during the restart, and the taskbar button and tray icon disappear for a moment.
-
-**With the option off** the plugin does not follow the track on these outputs. If AIMP plays into Voicemeeter, the plugin only keeps the Voicemeeter engine at AIMP's own rate so the pitch is always right. WASAPI shared never needs a restart, because Windows handles the rate there.
+Expect a short interruption on every rate change. In rare cases AIMP may not come back by itself or settings may be lost — keep a backup of `AIMP.ini`. **Seamless restart**: right before AIMP closes, the helper takes a still image of AIMP's windows and shows it in exactly the same place, so AIMP seems to stay open. The image fades out as soon as the new AIMP window is on screen. Audio still pauses during the restart, and the taskbar button and tray icon disappear for a moment.
 
 **ASIO driver** and **Set the ASIO driver's rate directly** are only needed if AIMP does not set the driver's rate itself.
 
@@ -152,7 +154,7 @@ The **A1 output device** list (WDM / KS / MME / ASIO) comes straight from Voicem
 The rest of the tab shows the statistics:
 
 - **Now playing**: AIMP output, detected mode, track (rate / bits / channels), AIMP's own rate, the output rate with a *bit-perfect* or *integer multiple* note, the device chain, Voicemeeter status (if it is installed) and the timing profile.
-- **Counters**: analysed tracks, switches, already matching, failed, Voicemeeter restarts (if it is installed), AIMP restarts, switch time (last / average).
+- **Counters**: analysed tracks, switches, already matching, failed, Voicemeeter restarts (if it is installed), AIMP rate changes (without restart; AIMP restarts of the legacy method are shown once there are any), switch time (last / average).
 - **Track sample rates**: how your library is distributed (e.g. 44.1 kHz: 43 (86 %)).
 - **Recent events**: the latest log lines.
 - **Test format** switches the Windows default format back and forth once and writes every step to the log, which helps with troubleshooting.
@@ -204,14 +206,14 @@ Every step has a symbol in a coloured circle: green for unchanged, red for a ste
 1. When a track starts playing, the plugin reads its sample rate, bit depth, channels and codec. A track that AIMP restored from the last session is checked as soon as you press play. Internet streams and the [exceptions](#general) are not switched, and a rate above the *highest sample rate* is lowered within its family.
 2. It detects the output type from AIMP's output device:
 
-| Output | What happens | AIMP restart needed? |
+| Output | What happens | AIMP's own rate |
 |---|---|---|
-| **WASAPI shared** | The Windows "default format" of the device is set to the track's rate. | No |
-| **WASAPI exclusive** (event / push) | AIMP opens the device itself, but with its own fixed rate. | **Yes** (optional, experimental) |
-| **ASIO** | AIMP drives the ASIO driver with its own fixed rate. With *Voicemeeter Virtual ASIO* the Voicemeeter engine is switched as well. | **Yes** (optional, experimental) |
-| **DirectSound** | The Windows default format is switched, but AIMP keeps its own fixed rate. | **Yes** (optional, experimental) |
-| **PipeWire** (Linux) | AIMP for Linux resamples every track to its own fixed rate (*Sound Output → Parameters*). The PipeWire graph rate is set to **that** rate with `pw-metadata -n settings 0 clock.force-rate <Hz>`, so PipeWire does not resample a second time. It is released when AIMP closes. | To follow each track: yes (planned for Linux) |
-| **ALSA direct** (Linux) | Nothing is changed; AIMP opens the device with its own fixed rate. | To follow each track: yes (planned for Linux) |
+| **WASAPI shared** | The Windows "default format" of the device is set to the track's rate. | Not used |
+| **WASAPI exclusive** (event / push) | AIMP opens the device itself, but with its own fixed rate. | Changed without restart |
+| **ASIO** | AIMP drives the ASIO driver with its own fixed rate. With *Voicemeeter Virtual ASIO* the Voicemeeter engine is switched first. | Changed without restart |
+| **DirectSound** | The Windows default format is switched, and AIMP's own fixed rate as well. | Changed without restart |
+| **PipeWire** (Linux) | AIMP for Linux resamples every track to its own fixed rate (*Sound Output → Parameters*). The PipeWire graph rate is set to **that** rate with `pw-metadata -n settings 0 clock.force-rate <Hz>`, so PipeWire does not resample a second time. It is released when AIMP closes. | Not changed yet (planned for Linux) |
+| **ALSA direct** (Linux) | Nothing is changed; AIMP opens the device with its own fixed rate. | Not changed yet (planned for Linux) |
 
 3. It picks a rate that **all** devices in the chain support, or an integer multiple of the same family.
 4. If everything already matches, **nothing** happens: albums with one rate play without any gap.
@@ -249,26 +251,26 @@ Both files are in AIMP's profile folder, next to `AIMP.ini`:
 
 Versions before 2.6.1 kept the settings in `%APPDATA%\AIMP` even for a portable AIMP; a portable AIMP takes that file over once, on its first start with 2.6.1.
 
-The settings file is created with all defaults on the first start (plugin **disabled**, AIMP restart **off**). Its sections are `[PreventResampling]` (options), `[Statistics]` (counters), `[Updates]` (last update check) and, only for a moment during a restart by the plugin, `[Session]`. Delete the file to reset everything. The log shows start-up, detected hardware and devices, chosen rates and every switch, including the restart helper's steps.
+The settings file is created with all defaults on the first start (plugin **disabled**, legacy AIMP restart **off**). Its sections are `[PreventResampling]` (options), `[Statistics]` (counters), `[Updates]` (last update check) and, only for a moment during a restart by the plugin, `[Session]`. Delete the file to reset everything. The log shows start-up, detected hardware and devices, chosen rates and every switch, including the restart helper's steps.
 
 ## Known limitations
 
 - The Windows device format can only be changed through the **undocumented** `IPolicyConfig` interface. Windows updates may break it.
 - In shared mode and with Voicemeeter the track is paused briefly on a rate change, because AIMP opens the device before the plugin knows the rate.
-- ASIO / WASAPI exclusive / DirectSound only follow the track with the experimental restart option.
-- Internet radio and other streams (URLs) are never switched: switching would interrupt the stream (and with the restart option restart AIMP on every station). They play at the current rate; the log says *internet stream - not switched*.
+- ASIO / WASAPI exclusive / DirectSound: AIMP's own rate is changed through AIMP's preferences window, the only way AIMP offers. It depends on that window (its page and controls); a future AIMP version may need an update of the plugin. Then tick the legacy method until it is there.
+- Internet radio and other streams (URLs) are never switched: switching would interrupt the stream (and with the legacy restart method restart AIMP on every station). They play at the current rate; the log says *internet stream - not switched*.
 - ASIO: most drivers allow only one client. *Set the ASIO driver's rate directly* only works if AIMP releases the driver when stopping.
 - Bit depth following the track only works in WASAPI shared mode and only with drivers that accept the format; Wine (used for the tests) cannot change Windows device formats at all.
-- Linux: AIMP for Linux (6.00 Beta 7) always resamples to its own fixed rate, like on Windows. The *highest sample rate* setting has no effect there. Until the AIMP restart is available on Linux, the plugin only keeps PipeWire at AIMP's rate, which avoids a second resampling step; playback is not yet bit-perfect for tracks with other rates. Only PipeWire is switched (plain PulseAudio is not).
+- Linux: AIMP for Linux (6.00 Beta 7) always resamples to its own fixed rate, like on Windows. The *highest sample rate* setting has no effect there. Until AIMP's own rate can be changed on Linux, the plugin only keeps PipeWire at AIMP's rate, which avoids a second resampling step; playback is not yet bit-perfect for tracks with other rates. Only PipeWire is switched (plain PulseAudio is not).
 
 ## Troubleshooting
 
 - **Plugin does not appear in AIMP:** check that you use AIMP 4.70 or newer. Install it with the `.aimppack` and restart AIMP. When copying by hand, the plugin file has to be directly in `Plugins/PreventResampling/` (no `x64` sub-folder), the ZIP has to match your AIMP (32 or 64 bit), and the plugin has to be ticked under *Preferences → Plugins*.
 - **Installing over an older version fails:** use the `.aimppack`, not the DLL. AIMP is running and holds the old DLL.
-- **Nothing happens:** the plugin is off after installation — enable it on the *General* tab. Then check the *Advanced* tab or the log. With ASIO / WASAPI exclusive / DirectSound the restart option must be enabled.
+- **Nothing happens:** the plugin is off after installation — enable it on the *General* tab. Then check the *Advanced* tab or the log. With ASIO / WASAPI exclusive / DirectSound the log shows each change of AIMP's rate (*AIMP: 44.1 kHz -> 96 kHz without restart*) or why it was not possible.
 - **A Voicemeeter output turns red:** tick *Auto restart audio engine (all devices)* in Voicemeeter.
 - **"No suitable rate":** the driver reports no support for the rate (and no multiple) in exclusive mode.
-- **AIMP does not come back after a restart:** start AIMP yourself. The log shows each step of the restart helper. Disable the restart option if it happens again.
+- **AIMP does not come back after a restart** (legacy method): start AIMP yourself. The log shows each step of the restart helper. Untick the legacy method if it happens again.
 - **Something else:** [report a problem](https://github.com/RainBowFl4sh/AIMP-No-Resmapling/issues) and attach `PreventResampling.log`.
 
 ## Building

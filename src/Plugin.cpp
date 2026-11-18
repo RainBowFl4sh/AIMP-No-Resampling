@@ -45,12 +45,11 @@ static tstring TakeOverLegacySettings(const tstring& path) {
     return legacy;
 }
 
-// After an update AIMP restarts to load the new version - tell the user why, once per version
+// After an update (AIMP restarts to load a new version, or the DLL was copied by hand) - once per version
 static void ShowUpdatedNotice() {
     if (g_engine && !(g_frame && g_frame->IsOpen())) CurrentLanguage() = ResolveLanguage(g_engine->cfg.language);
     tstring text = Trf("%1 for AIMP was updated to version %2.", {AR_T(AR_PLUGIN_NAME), AR_T(AR_VERSION)}) + AR_NL AR_NL +
-                   Trf("AIMP restarted to load the new version. The changes are on the About tab: "
-                       "Preferences \u2192 Plugins \u2192 %1 \u2192 About.", {AR_T(AR_PLUGIN_NAME)});
+                   Trf("The changes are on the About tab: Preferences \u2192 Plugins \u2192 %1 \u2192 About.", {AR_T(AR_PLUGIN_NAME)});
     if (!ShowMessage(text)) Log(AR_T("Update notice could not be shown (no message dialog in this AIMP version)"));
 }
 
@@ -209,7 +208,7 @@ public:
             case AIMP_PLUGIN_INFO_FULL_DESCRIPTION:
                 return const_cast<PChar>(AR_T("Version " AR_VERSION ". Supports WASAPI shared, Voicemeeter (engine rate and "
                                               "A1-A5 devices) and PipeWire on Linux; ASIO, WASAPI exclusive and DirectSound "
-                                              "via an optional, experimental AIMP restart. For AIMP 4.70, 5 and 6. Disabled after installation - "
+                                              "by changing AIMP's own rate without a restart. For AIMP 4.70, 5 and 6. Disabled after installation - "
                                               "enable it in Preferences -> Plugins -> " AR_PLUGIN_NAME "."));
         }
         return nullptr;
@@ -343,6 +342,7 @@ public:
         if (!e) return S_OK;
 #ifdef _WIN32
         win::WindowRestorer::Get().End();
+        win::LiveRate::Get().Cancel();  // a hidden switch of AIMP's rate that is still running
 #endif
         if (disp_ && hook_) disp_->Unhook(hook_.Get());
         hook_.Reset();
