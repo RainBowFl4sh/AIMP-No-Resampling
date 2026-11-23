@@ -4,6 +4,7 @@
 // after the login, the session does not see it - then the plugin logs in again (see Type()).
 #pragma once
 #include "../Common.h"
+#include <tlhelp32.h>
 
 namespace ar {
 namespace win {
@@ -107,6 +108,22 @@ class Voicemeeter {
     }
 
 public:
+    // Is a Voicemeeter program running (voicemeeter.exe, voicemeeterpro.exe, voicemeeter8x64.exe ...)?
+    // A process snapshot takes a few ms.
+    static bool ProcessRunning() {
+        const wchar_t* want = L"voicemeeter";
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap == INVALID_HANDLE_VALUE) return true;  // unknown: try the login as before
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof(pe);
+        bool found = false;
+        size_t wl = wcslen(want);
+        for (BOOL more = Process32FirstW(snap, &pe); more && !found; more = Process32NextW(snap, &pe))
+            found = _wcsnicmp(pe.szExeFile, want, wl) == 0 && !wcsstr(_wcslwr(pe.szExeFile), L"setup");
+        CloseHandle(snap);
+        return found;
+    }
+
     static Voicemeeter& Get() {
         static Voicemeeter v;
         return v;
@@ -131,8 +148,9 @@ public:
         if (!Load()) return 0;
         long t = 0;
         bool ok = loggedIn_ && getType_(&t) == 0;
-        if (!ok && NowMs() - lastLogin_ >= 3000) {
-            // Not reachable: Voicemeeter may have been started after the login (at most every 3 s)
+        if (!ok && NowMs() - lastLogin_ >= 3000 && ProcessRunning()) {
+            // Not reachable: Voicemeeter may have been started after the login (at most every 3 s). Only when its
+            // program runs: logging in again without it costs ~175 ms on every track (measured on Windows 11)
             if (loggedIn_) logout_();
             loggedIn_ = login_() >= 0;
             lastLogin_ = NowMs();

@@ -101,6 +101,36 @@ Wartezeit ohne automatisches Timing (ms):
 Пауза без автоматических задержек (мс):
 Пауза без автоматичних затримок (мс):
 
+Back to the start-up rates after a pause of (s):
+Nach einer Pause zurück auf die Start-Raten (s):
+После паузы вернуть исходные частоты (с):
+Після паузи повернути початкові частоти (с):
+
+When nothing plays for this long (stopped or paused), AIMP, Voicemeeter and the Windows devices go back to the rates they had before the plugin changed them. The next track switches again.
+Läuft so lange nichts (gestoppt oder pausiert), kehren AIMP, Voicemeeter und die Windows-Geräte zu den Raten zurück, die sie hatten, bevor das Plugin sie geändert hat. Der nächste Titel schaltet wieder um.
+Если столько времени ничего не играет (остановлено или на паузе), AIMP, Voicemeeter и устройства Windows возвращаются к частотам, которые были до изменений плагина. Следующий трек снова переключает.
+Якщо стільки часу нічого не грає (зупинено або на паузі), AIMP, Voicemeeter і пристрої Windows повертаються до частот, які були до змін плагіна. Наступний трек знову перемикає.
+
+Switch before the next track starts (automatic track changes)
+Vor dem nächsten Titel umschalten (automatischer Titelwechsel)
+Переключать до начала следующего трека (автопереход)
+Перемикати до початку наступного треку (автоперехід)
+
+Near the end of a track the plugin looks at the next one. If it needs another rate, AIMP stops after the current track, the plugin switches and then starts the next track - it is not played at the old rate first. With AIMP's crossfade the current track is not mixed into a next track with another rate.
+Kurz vor Titelende schaut das Plugin auf den nächsten Titel. Braucht er eine andere Rate, stoppt AIMP nach dem aktuellen Titel, das Plugin schaltet um und startet dann den nächsten Titel - er wird nicht erst mit der alten Rate angespielt. Mit AIMPs Crossfade wird der aktuelle Titel nicht in einen nächsten Titel mit anderer Rate übergeblendet.
+Незадолго до конца трека плагин смотрит на следующий. Если ему нужна другая частота, AIMP останавливается после текущего трека, плагин переключает и затем запускает следующий трек - он не играет сначала со старой частотой. При кроссфейде AIMP текущий трек не смешивается со следующим треком другой частоты.
+Незадовго до кінця треку плагін дивиться на наступний. Якщо йому потрібна інша частота, AIMP зупиняється після поточного треку, плагін перемикає і потім запускає наступний трек - він не грає спочатку зі старою частотою. При кросфейді AIMP поточний трек не змішується з наступним треком іншої частоти.
+
+With AIMP's crossfade: no mixing into a track with another rate.
+Mit AIMPs Crossfade: kein Überblenden in Titel mit anderer Rate.
+С кроссфейдом AIMP: без смешивания с треком другой частоты.
+З кросфейдом AIMP: без змішування з треком іншої частоти.
+
+More outputs make switching slower - untick rarely used ones.
+Mehr Ausgänge = längeres Umschalten, selten genutzte abwählen.
+Больше выходов – дольше переключение.
+Більше виходів – довше перемикання.
+
 Open folder
 Ordner öffnen
 Открыть папку

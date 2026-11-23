@@ -138,6 +138,10 @@ Only relevant if you use **Voicemeeter** (Standard, Banana or Potato; VB-Audio, 
 - switches the **Windows format of all hardware outputs A1–A5** that have a device (A1–A2 Standard, A1–A3 Banana, A1–A5 Potato), so every DAC runs at the track's rate. Voicemeeter often names devices differently than Windows (A1 "FiiO ASIO Driver" ↔ "Speakers (FiiO KA11)"); the plugin matches them by name,
 - restarts the engine only when its rate or a device format really changed, and waits until it runs at the new rate.
 
+With **Switch all hardware outputs** ticked, single outputs can be ticked off: **A2**, **A3** (Banana) and **A2–A5** (Potato) appear below it; A1 is always switched. Every extra output adds its own switching time (Windows needs up to a second for some devices, e.g. Realtek speakers), so untick outputs you rarely use — the tab notes this while the option is ticked.
+
+If AIMP plays straight to a device (DirectSound or WASAPI) that a running Voicemeeter uses on one of its outputs, the plugin leaves that device's Windows format alone: changing it would make AIMP report *Device is busy*. The log names the device once.
+
 > [!IMPORTANT]
 > Tick **"Auto restart audio engine (all devices)"** in Voicemeeter's settings. Without it, outputs on WDM (e.g. A2) can turn red after a rate change. Voicemeeter's API has no parameter for this option, so the plugin cannot set it for you.
 
@@ -149,6 +153,8 @@ The **A1 output device** list (WDM / KS / MME / ASIO) comes straight from Voicem
 
 - **Automatic timing based on your hardware**: the plugin detects CPU threads, clock and RAM and picks how long to wait after a switch (see [Timing](#timing-and-hardware-detection)). Turn it off to set a fixed settle time.
 - **Language**: *Automatic* follows AIMP's language (English, German, Russian and Ukrainian are translated; every other language shows English), or pick one of the four. The new language is shown at once and stored with *OK* / *Apply*. The log stays English.
+- **Back to the start-up rates after a pause of (s)** (off by default, 30 s): when nothing plays for this long (stopped or paused), AIMP, Voicemeeter and the Windows devices go back to the rates they had before the plugin changed them, so other programs run at your usual rate again. The next track switches as usual. Switching the plugin off (General tab, AIMP's menu or the hotkey) does the same right away.
+- **Switch before the next track starts** (off by default): near the end of a track the plugin looks at the next one in AIMP's queue. If it needs another rate, AIMP stops after the current track, the plugin switches and then starts the next track, so it is never played at the old rate first. Only for automatic track changes; AIMP's own *stop after track* is left alone. With AIMP's crossfade the plugin looks before the crossfade begins, and the current track ends without being mixed into a next track with another rate.
 - **Settings file**: *Export...* saves the plugin's settings (the `[PreventResampling]` section, as shown on the page) to a file of your choice, *Import...* loads such a file and saves it right away, *Open folder* opens the folder of the settings file and the log.
 
 The rest of the tab shows the statistics:
@@ -221,6 +227,18 @@ Every step has a symbol in a coloured circle: green for unchanged, red for a ste
 6. While the track plays, the plugin watches the output: another device in AIMP, a new Windows default device (e.g. headphones plugged in), another format chosen in Windows, or another device or engine rate in Voicemeeter. The track is then checked again right away instead of only with the next track — at most three times per track, so a device that keeps changing cannot start an endless loop.
 
 ### Timing and hardware detection
+
+Every change ends with a line `Timing: ...` in the log: how long each step took (stopping playback, devices — each with its own time —, Voicemeeter, AIMP's rate, the settle time) and how long the music was silent. Since **2.8.1** the steps run at the same time where possible (devices, Voicemeeter and AIMP's rate) and without fixed waiting steps. Compared with 2.8.0, measured with the same settings on Windows 11 with a FiiO KA11 (UAC 1.0):
+
+| Output | 2.8.0 | 2.8.1 | Faster by up to |
+|---|---|---|---|
+| ASIO → Voicemeeter Virtual ASIO (Banana), silence | 1.64 s | 1.03 s | **37 %** |
+| DirectSound to the DAC, track start until music plays again | 1.29 s | 0.98 s | **24 %** |
+| DirectSound to the DAC, silence | 1.11 s | 0.97 s | 13 % |
+| WASAPI exclusive to the DAC, switching time (the track keeps playing) | 0.98 s | 0.84 s | 14 % |
+
+With Voicemeeter, most of the remaining time is Voicemeeter's own engine restart (about 0.55 s) and AIMP applying its new rate (about 0.7 s, at the same time). AIMP's *Pre-load next track* option makes no difference (measured: 1036 vs. 1034 ms).
+
 
 | Profile | Typical hardware | Settle time | Voicemeeter polling |
 |---|---|---|---|

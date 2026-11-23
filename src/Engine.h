@@ -47,6 +47,8 @@ struct Job {
     unsigned gen = 0;
     bool selfRestart = false;   // playback restarted by the plugin itself (not counted)
     bool outputChange = false;  // checked again because an output changed (B5)
+    int64_t startedMs = 0;      // NowMs() when AIMP reported the track (timing line in the log)
+    bool preStart = false;      // 2.8.1 (P6): AIMP stopped before this track - switch, then start it
 };
 
 class Engine {
@@ -108,6 +110,46 @@ private:
     std::map<tstring, std::vector<uint32_t>> aimpLists_;
     std::atomic<bool> livePending_{false};  // AIMP's preferences were open: switch when they are closed (Tick)
     int liveFailures_ = 0;  // worker: changes in a row where AIMP's preferences could not be used (3 = given up)
+    // 2.8.1: timing line of a switch that restarts playback; finished and written when AIMP reports the track
+    // again (main thread, OnStreamStart) or by the worker if that does not happen
+    // 2.8.1: idle restore (worker only): AIMP's rate before the plugin changed it, start of the pause
+    uint32_t aimpStartRate_ = 0;
+    int64_t idleSince_ = 0;
+    bool aimpChangedByPlugin_ = false;
+    // Set by the main thread, read by the worker without waiting for the main thread (which may be closing AIMP)
+    std::atomic<bool> idleOn_{false}, playing_{false}, terminating_{false};
+    std::atomic<int> idleSecs_{30};
+    bool restoreReq_ = false;  // under m_: the plugin was switched off - put the rates back
+    // 2.8.1 (P6, main thread): AIMP stops after the current track because the next one needs another rate
+    bool preArmed_ = false;
+    int64_t preEndAt_ = 0;
+    Ptr<IAIMPPlaylistItem> preItem_;
+    int64_t lastVmCheck_ = 0;
+    std::mutex timingM_;
+    tstring pendingTiming_;
+    int64_t pendingStarted_ = 0, pendingStopped_ = 0;
+
+    static tstring Ms(int64_t ms) { return Num((long long)(ms < 0 ? 0 : ms)); }
+
+    // Main thread or worker: writes the pending timing line (playingAgain = NowMs() when AIMP reported the
+    // track again, 0 = not reported)
+    void FlushTiming(int64_t playingAgain) {
+        tstring line;
+        int64_t started = 0, stopped = 0;
+        {
+            std::lock_guard<std::mutex> l(timingM_);
+            if (pendingTiming_.empty()) return;
+            line.swap(pendingTiming_);
+            started = pendingStarted_;
+            stopped = pendingStopped_;
+        }
+        if (playingAgain)
+            line += AR_T(" | silence ") + Ms(playingAgain - stopped) + AR_T(" ms | track start to playing again ") +
+                    Ms(playingAgain - started) + AR_T(" ms");
+        else
+            line += AR_T(" | AIMP did not report the track again within 2 s");
+        Log(line);
+    }
 
     void OnMain(std::function<void()> f, bool wait) {
         if (quit_) return;  // Finalize waits on the main thread -> do not block
@@ -168,7 +210,33 @@ private:
 #endif
     }
 
+    // Worker, P6: the track AIMP stopped before is started once the switch is done (whatever happens in Handle)
+    struct PreStartGuard {
+        Engine* e;
+        Job* j;
+        ~PreStartGuard() {
+            if (!j->preStart || e->quit_ || e->gen_ != j->gen) return;
+            IAIMPPlaylistItem* item = j->item.Get();
+            tstring file = j->file;
+            e->OnMain([e = e, item, file] {
+                e->restartFile_ = file;
+                if (Failed(e->PlayAt(item, file, 0.0f, AIMP_SERVICE_PLAYER_FLAGS_PLAY_WITHOUT_ADDING_TO_PLAYLIST)))
+                    Log(AR_T("  could not start the next track"));
+            }, true);
+            for (int i = 0; i < 40 && !e->quit_; i++) {
+                {
+                    std::lock_guard<std::mutex> l(e->timingM_);
+                    if (e->pendingTiming_.empty()) break;
+                }
+                SleepMs(50);
+            }
+            e->FlushTiming(0);
+        }
+    };
+
     void Handle(Job& j, RateController& rc) {
+        PreStartGuard preGuard{this, &j};
+        int64_t handleStart = NowMs();
         waitForVm_ = false;
         vmWatch_ = false;
         if (j.outputChange) {
@@ -187,6 +255,8 @@ private:
         // Which rate does AIMP itself play with? (AIMPSoundOut\DeviceFreq)
         uint32_t aimpRate = 0;
         OnMain([this, &aimpRate] { lastAimpRate_ = aimpRate = aimpSync.AimpRate(); }, true);
+        if (!aimpStartRate_) aimpStartRate_ = aimpRate;  // before the plugin changes it (idle restore)
+        idleSince_ = 0;
 
         // ASIO / WASAPI exclusive / DirectSound: AIMP plays with its own fixed rate there. Since 2.8 the
         // plugin changes that rate on the fly (win/LiveRate.h): devices first (Voicemeeter, DirectSound's
@@ -374,7 +444,8 @@ private:
                          : tstring()));
         int64_t t0 = NowMs();
         double pos = 0;
-        if (d.stopPlayback) {
+        int64_t tStop = 0;
+        if (d.stopPlayback && !j.preStart) {  // P6: AIMP is stopped already
             bool playing = true;
             OnMain([this, &pos, &playing] {
                 playing = player->GetState() == AIMP_PLAYER_STATE_PLAYING;
@@ -386,16 +457,47 @@ private:
                 Log(AR_T("  playback was paused meanwhile - switching when it continues"));
                 return;
             }
+            tStop = NowMs() - t0;
         }
         applying_ = true;
-        uint32_t result = devApply ? rc.Apply(d) : d.rate;
+        if (devApply) rc.last = RateController::Times();
+        // 2.8.1: when AIMP's own rate follows, that step gives the devices their time - no fixed pause before it
+#ifdef _WIN32
+        bool settleNow = !(live && liveTarget && liveTarget != aimpRate);
+#else
+        bool settleNow = true;
+#endif
+#ifdef _WIN32
+        win::LiveRate::Result timingLive;
+        bool timingLiveUsed = false;
+        // 2.8.1 (P2): devices (Windows formats, Voicemeeter's engine) and AIMP's own rate at the same time
+        // instead of one after the other. Not for an ASIO driver the plugin sets itself: AIMP needs its result.
+        win::LiveRate::Result parallelLive;
+        bool parallel = devApply && liveNeeds && !d.asioDirect && !quit_ && gen_ == j.gen;
+        uint32_t result = d.rate;
+        if (parallel) {
+            std::thread dev([&rc, &d, &result] {
+                HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                result = rc.Apply(d, true);  // the pause after the devices stays: AIMP is usually done earlier
+                if (SUCCEEDED(co)) CoUninitialize();
+            });
+            parallelLive = SwitchAimpLive(liveWanted);
+            dev.join();
+        } else if (devApply) {
+            result = rc.Apply(d, settleNow);
+        }
+#else
+        uint32_t result = devApply ? rc.Apply(d, settleNow) : d.rate;
+#endif
 #ifdef _WIN32
         bool liveOk = true;
         uint32_t liveGot = 0;
         if (liveNeeds && !quit_ && gen_ == j.gen) {
             std::vector<uint32_t> want = liveWanted;
             if (devApply && result && result != d.rate) want = {result};  // e.g. an ASIO driver set by the plugin
-            win::LiveRate::Result lr = SwitchAimpLive(want);
+            win::LiveRate::Result lr = parallel ? parallelLive : SwitchAimpLive(want);
+            timingLive = lr;
+            timingLiveUsed = true;
             if (!lr.list.empty()) aimpLists_[j.track.aimpOutput] = lr.list;
             liveOk = lr.ok;
             liveGot = lr.got ? lr.got : aimpRate;
@@ -406,6 +508,7 @@ private:
                 Log(AR_T("AIMP's rate could not be changed three times in a row - not tried again until AIMP restarts. "
                          "The legacy method (ASIO / Exclusive tab) restarts AIMP instead."));
             if (lr.ok) {
+                aimpChangedByPlugin_ = true;
                 Log(AR_T("  AIMP: ") + Khz(aimpRate) + AR_T(" -> ") + Khz(liveGot) + AR_T(" without restart (") + Num(lr.ms) +
                     AR_T(" ms)"));
                 if (!devApply) result = liveGot;
@@ -414,6 +517,7 @@ private:
                 if (eng && eng != liveGot) {
                     Log(AR_T("  Voicemeeter's engine runs at ") + Khz(eng) + AR_T(", not ") + Khz(liveGot) + AR_T(" - AIMP follows Voicemeeter"));
                     win::LiveRate::Result again = SwitchAimpLive({eng});
+                    timingLive.ms += again.ms;
                     if (again.got) liveGot = again.got;
                     liveOk = false;
                     result = 0;
@@ -465,6 +569,48 @@ private:
 #endif
         });
         WatchVoicemeeter(d);
+
+        // 2.8.1: how long each step took (P1). AIMP's own restart (legacy) logs its own time.
+        tstring timing;
+        if (!aimpNeeds) {
+            auto part = [&timing](const TChar* name, int64_t ms) {
+                timing += tstring(AR_T(" | ")) + name + AR_T(" ") + Ms(ms) + AR_T(" ms");
+            };
+            timing = AR_T("  Timing: wait ") + Ms(handleStart - j.startedMs) + AR_T(" ms");
+            part(AR_T("check"), t0 - handleStart);
+            if (d.stopPlayback && !j.preStart) part(AR_T("stop"), tStop);
+            if (devApply) {
+                if (rc.last.devices >= 5) part(AR_T("devices"), rc.last.devices);
+                if (rc.last.asio >= 5) part(AR_T("ASIO"), rc.last.asio);
+                if (rc.last.vm >= 5) part(AR_T("Voicemeeter"), rc.last.vm);
+                part(AR_T("settle"), rc.last.settle);
+            }
+#ifdef _WIN32
+            if (timingLiveUsed) {
+                part(AR_T("AIMP"), timingLive.ms);
+                if (timingLive.msPage)
+                    timing += AR_T(" (open ") + Ms(timingLive.msPage) + AR_T(", apply ") +
+                              Ms(timingLive.msConfirmed ? timingLive.msConfirmed - timingLive.msPage : 0) +
+                              (timingLive.msConfirmed && timingLive.ms > timingLive.msConfirmed
+                                   ? AR_T(", close ") + Ms(timingLive.ms - timingLive.msConfirmed)
+                                   : tstring(AR_T(", closes in the background"))) +
+                              AR_T(")");
+            }
+#endif
+#ifdef _WIN32
+            if (parallel) timing += AR_T(" | devices and AIMP at the same time");
+#endif
+            part(AR_T("switch"), dt);
+            if (j.preStart) {  // finished when the next track plays (PreStartGuard, OnStreamStart)
+                std::lock_guard<std::mutex> l(timingM_);
+                pendingTiming_ = timing + AR_T(" | before the next track started");
+                pendingStarted_ = pendingStopped_ = j.startedMs;
+                timing.clear();
+            } else if (!d.stopPlayback) {
+                Log(timing + AR_T(" | track kept playing"));
+                timing.clear();
+            }
+        }
         if (quit_ || gen_ != j.gen) return;
 
         if (aimpNeeds) {
@@ -485,14 +631,29 @@ private:
                 return;  // continues after the start (ResumeAfterRestart)
             }
         }
-        if (d.stopPlayback) {
+        if (d.stopPlayback && !j.preStart) {
             IAIMPPlaylistItem* item = j.item.Get();
             tstring file = j.file;
             float offset = pos > 1.0 ? (float)pos : 0.0f;  // continue at the same position
+            if (!timing.empty()) {
+                std::lock_guard<std::mutex> l(timingM_);
+                pendingTiming_ = timing;
+                pendingStarted_ = j.startedMs;
+                pendingStopped_ = t0 + (d.stopPlayback ? tStop : 0);
+            }
             OnMain([this, item, file, offset] {
                 restartFile_ = file;
                 PlayAt(item, file, offset, AIMP_SERVICE_PLAYER_FLAGS_PLAY_WITHOUT_ADDING_TO_PLAYLIST);
             }, true);
+            // Normally written by OnStreamStart already; otherwise after 2 s without the time
+            for (int i = 0; i < 40 && !quit_; i++) {
+                {
+                    std::lock_guard<std::mutex> l(timingM_);
+                    if (pendingTiming_.empty()) break;
+                }
+                SleepMs(50);
+            }
+            FlushTiming(0);
         }
     }
 
@@ -512,6 +673,101 @@ private:
 #endif
     }
 
+    // Worker, 2.8.1: nothing played for the set time (Advanced tab) -> AIMP, Voicemeeter and the devices go back
+    // to the rates from before the plugin changed them; the next track switches again
+    void CheckIdle(RateController& rc) {
+        // Only atomics here: the main thread may be busy closing AIMP (it must never be waited for then)
+        int secs = idleSecs_;
+        if (quit_ || terminating_ || selfRestart_ || !idleOn_ || playing_) {
+            idleSince_ = 0;
+            return;
+        }
+        if (!idleSince_) {
+            idleSince_ = NowMs();
+            return;
+        }
+        if (NowMs() - idleSince_ < (int64_t)secs * 1000) return;
+        idleSince_ = 0;
+        bool legacy = false, prefs = false, playing = false;
+        uint32_t aimpNow = 0;
+        OnMain([&] {
+            legacy = cfg.legacyRestart;
+            playing = player && player->GetState() == AIMP_PLAYER_STATE_PLAYING;
+            aimpNow = lastAimpRate_;
+#ifdef _WIN32
+            prefs = win::LiveRate::PreferencesOpen() || win::LiveRate::Running();
+#endif
+        }, true);
+        if (quit_ || terminating_ || playing) return;
+        Log(AR_T("Nothing played for ") + Num(secs) + AR_T(" s - back to the rates from before the plugin changed them"));
+        RestoreStart(rc, aimpNow, legacy, prefs);
+    }
+
+    // Worker, 2.8.1: the plugin was switched off (page, menu, hotkey) -> back to the rates from before at once;
+    // a playing track continues at the same position
+    void RestoreAfterDisable(RateController& rc) {
+        if (!rc.HasChanges() && !aimpChangedByPlugin_) return;
+        bool playing = false, legacy = false, prefs = false;
+        uint32_t aimpNow = 0;
+        double pos = 0;
+        Ptr<IAIMPPlaylistItem> item;
+        tstring file;
+        OnMain([&] {
+            legacy = cfg.legacyRestart;
+            aimpNow = lastAimpRate_;
+#ifdef _WIN32
+            prefs = win::LiveRate::PreferencesOpen() || win::LiveRate::Running();
+#endif
+            playing = player && player->GetState() == AIMP_PLAYER_STATE_PLAYING;
+#ifndef _WIN32
+            playing = false;  // Linux: PipeWire only follows AIMP's own rate - releasing it needs no stop
+#endif
+            if (!playing) return;
+            player->GetPosition(&pos);
+            player->GetPlaylistItem(item.Out());
+            file = CurrentFile();
+            player->Stop();
+        }, true);
+        Log(AR_T("Plugin switched off - back to the rates from before the plugin changed them"));
+        RestoreStart(rc, aimpNow, legacy, prefs);
+        if (playing && !quit_) {
+            IAIMPPlaylistItem* it = item.Get();
+            float offset = pos > 1.0 ? (float)pos : 0.0f;
+            OnMain([this, it, file, offset] { PlayAt(it, file, offset, AIMP_SERVICE_PLAYER_FLAGS_PLAY_WITHOUT_ADDING_TO_PLAYLIST); }, true);
+        }
+    }
+
+    // Worker: AIMP (without restart), Voicemeeter and the devices back to the rates from before the plugin
+    void RestoreStart(RateController& rc, uint32_t aimpNow, bool legacy, bool prefs) {
+        applying_ = true;
+#ifdef _WIN32
+        // AIMP first: with Voicemeeter Virtual ASIO, AIMP and Voicemeeter's engine have to match again
+        if (aimpChangedByPlugin_ && aimpStartRate_ && aimpNow != aimpStartRate_ && !legacy && !prefs) {
+            win::LiveRate::Result lr = SwitchAimpLive({aimpStartRate_});
+            if (lr.ok) Log(AR_T("  AIMP: ") + Khz(aimpNow) + AR_T(" -> ") + Khz(aimpStartRate_) + AR_T(" without restart (") + Num(lr.ms) + AR_T(" ms)"));
+            else Log(AR_T("  AIMP's rate stays at ") + Khz(lr.got ? lr.got : aimpNow) + AR_T(": ") + lr.why);
+        }
+#else
+        (void)legacy;
+        (void)prefs;
+        (void)aimpNow;
+#endif
+        aimpChangedByPlugin_ = false;
+        rc.Shutdown(true);
+        lastApplyEnd_ = NowMs();
+        applying_ = false;
+        lastFile_.clear();
+        vmWatch_ = false;
+        OnMain([this] {
+            handledFile_.clear();  // the next play (also of a paused track) switches again
+            stats.Update([](Stats& s) {
+                s.deviceRate = 0;
+                s.note = AR_T("idle - back to the rates from before");
+            });
+            if (onStatsChanged) onStatsChanged();
+        }, false);
+    }
+
 #ifdef _WIN32
     static tstring RateList(const std::vector<uint32_t>& l) {
         tstring r;
@@ -527,6 +783,13 @@ private:
             bool done = false;
             win::LiveRate::Result r;
         };
+        // 2.8.1: the window of the switch before may still be closing in the background - wait for it
+        for (int i = 0; i < 100 && !quit_; i++) {
+            bool running = false;
+            OnMain([&running] { running = win::LiveRate::Running(); }, true);
+            if (!running) break;
+            SleepMs(10);
+        }
         auto w = std::make_shared<Wait>();
         OnMain([this, w, wanted] {
             win::LiveRate::Get().Start(wanted, [this] { return aimpSync.LiveAimpRate(); },
@@ -592,15 +855,29 @@ private:
             Job j;
             {
                 std::unique_lock<std::mutex> l(m_);
-                auto ready = [&] { return quit_ || has_; };
-                if (!waitForVm_ && !vmWatch_) cv_.wait(l, ready);
-                else if (!cv_.wait_for(l, std::chrono::seconds(waitForVm_ ? 3 : 2), ready)) {
+                auto ready = [&] { return quit_ || has_ || restoreReq_; };
+                // 2.8.1: while something is changed, the worker looks once a second whether AIMP plays (idle restore)
+                bool idleWatch = idleOn_ && !terminating_ && !selfRestart_ && (rc.HasChanges() || aimpChangedByPlugin_);
+                int vmEvery = waitForVm_ ? 3000 : vmWatch_ ? 2000 : 0;
+                if (!vmEvery && !idleWatch) cv_.wait(l, ready);
+                else if (!cv_.wait_for(l, std::chrono::milliseconds(idleWatch ? 1000 : vmEvery), ready)) {
                     l.unlock();
-                    if (waitForVm_) CheckVoicemeeterStarted();
-                    else CheckVoicemeeterChanged();
+                    if (idleWatch) CheckIdle(rc);
+                    if (vmEvery && NowMs() - lastVmCheck_ >= vmEvery - 50) {
+                        lastVmCheck_ = NowMs();
+                        if (waitForVm_) CheckVoicemeeterStarted();
+                        else CheckVoicemeeterChanged();
+                    }
                     continue;
                 }
                 if (quit_) break;
+                if (restoreReq_ && !has_) {  // 2.8.1: the plugin was switched off
+                    restoreReq_ = false;
+                    l.unlock();
+                    RestoreAfterDisable(rc);
+                    continue;
+                }
+                restoreReq_ = false;  // switched on again meanwhile: the new job decides
                 j = std::move(job_);
                 job_ = Job();
                 has_ = false;
@@ -822,7 +1099,22 @@ public:
     // track restored paused at start-up) is handled as soon as playback really starts.
     // Also covers the track AIMP restores at start-up: it is loaded before the plugin receives any
     // events, so there is no stream start for it - the first "playing" checks it instead.
+    // Main thread: the settings changed (start, settings page, menu, hotkey) - what the worker needs of them
+    void ConfigChanged() {
+        idleOn_ = cfg.enabled && cfg.idleRestore;
+        idleSecs_ = cfg.idleSeconds;
+    }
+    void OnTerminating() { terminating_ = true; }
+
     void OnPlayerState(int state) {
+        playing_ = state == AIMP_PLAYER_STATE_PLAYING;
+        if (state == AIMP_PLAYER_STATE_STOPPED && preArmed_) {
+            bool atEnd = NowMs() >= preEndAt_ - 700;  // not a stop by the user shortly before the end
+            Ptr<IAIMPPlaylistItem> next = preItem_;
+            Disarm();
+            if (atEnd && cfg.enabled && next) QueuePreStart(next.Get());
+            return;
+        }
         if (state != AIMP_PLAYER_STATE_PLAYING) return;
         if (player) ApplyPendingSeek(true);
         if (waitingForPlay_ || CurrentFile() != handledFile_) {
@@ -891,7 +1183,9 @@ public:
 
     // Main thread: AIMP started a new stream
     void OnStreamStart() {
+        if (player) playing_ = player->GetState() == AIMP_PLAYER_STATE_PLAYING;
         if (player) ApplyPendingSeek(false);
+        if (preArmed_) Disarm();  // another track started (e.g. clicked by the user): AIMP plays on as usual
         if (!cfg.enabled || !player) return;
         // Only act while AIMP is really playing: switching restarts playback, which must never start
         // music that the user had paused or stopped.
@@ -903,6 +1197,7 @@ public:
         Ptr<IAIMPFileInfo> info;
         if (Failed(player->GetInfo(info.Out())) || !info) return;
         Job j;
+        j.startedMs = NowMs();
         INT32 v = 0;
         if (Succeeded(info->GetValueAsInt32(AIMP_FILEINFO_PROPID_SAMPLERATE, &v)) && v > 0) j.track.rate = (uint32_t)v;
         if (!j.track.rate) return;
@@ -916,6 +1211,7 @@ public:
         j.track.aimpOutput = AimpOutput();
         j.track.lossy = IsLossy(j.track.codec, j.file);
         bool recheck = !restartFile_.empty() && restartFile_ == j.file;  // the plugin checks the same track again
+        if (recheck) FlushTiming(j.startedMs);  // the plugin's restart of the track is playing
         if (j.file != handledFile_ && !recheck) outputRechecks_ = 0;  // a new track
         lastOutput_ = j.track.aimpOutput;
         j.outputChange = pendingOutputChange_;
@@ -1021,9 +1317,120 @@ public:
 
     // Once a second while AIMP plays (AIMP_MSG_EVENT_PLAYER_UPDATE_POSITION): AIMP's output or its own rate,
     // Windows' devices (reported by DeviceWatcher) - something new is checked like a new track
+    // ---- P6 (2.8.1, main thread): switch before the next track starts
+    Ptr<IAIMPPropertyList> PlayerProps() {
+        Ptr<IAIMPPropertyList> pl;
+        if (player) player->QueryInterface(IID_IAIMPPropertyList, pl.OutV());
+        return pl;
+    }
+
+    void Disarm() {
+        preArmed_ = false;
+        preItem_.Reset();
+        auto pl = PlayerProps();
+        if (pl) pl->SetValueAsInt32(AIMP_PLAYER_PROPID_STOP_AFTER_TRACK, 0);
+    }
+
+    // AIMP's crossfade for automatic track changes in ms (0 = off or unknown): cross-mixing on (AIMP's switch
+    // "Cross-Mixing: on / off"), fading for automatic track changes on and a crossfade time set
+    int CrossfadeMs(IAIMPPropertyList* pl) {
+        INT32 on = 0, ms = 0;
+        auto disp = Service<IAIMPServiceMessageDispatcher>(IID_IAIMPServiceMessageDispatcher);
+        int mix = 0;
+        if (!disp || Failed(disp->Send(AIMP_MSG_PROPERTY_CROSSMIXING, AIMP_MSG_PROPVALUE_GET, &mix)) || !mix) return 0;
+        if (!pl || Failed(pl->GetValueAsInt32(AIMP_PLAYER_PROPID_AUTOSWITCHING, &on)) || !on) return 0;
+        if (Failed(pl->GetValueAsInt32(AIMP_PLAYER_PROPID_AUTOSWITCHING_CROSSFADE, &ms))) return 0;
+        return ms > 0 ? ms : 0;
+    }
+
+    // About a second before the end: does the next track need another rate? Then AIMP stops after this one.
+    void PreSwitchCheck() {
+        if (!cfg.preSwitch || cfg.legacyRestart || preArmed_ || handledSkipped_) return;
+        double dur = 0, pos = 0;
+        if (Failed(player->GetDuration(&dur)) || Failed(player->GetPosition(&pos)) || dur <= 0) return;
+        double left = dur - pos;
+        auto pl = PlayerProps();
+        // AIMP's crossfade for automatic track changes starts the next track that much earlier: look before it
+        // begins. AIMP then ends this track without mixing it into the next one (only for a change of rate)
+        double cross = CrossfadeMs(pl.Get()) / 1000.0;
+        double before = left - cross;  // time until AIMP would start the next track
+        if (before > 2.5 || before < 0.3) return;
+        INT32 stopAfter = 0;
+        if (!pl || Failed(pl->GetValueAsInt32(AIMP_PLAYER_PROPID_STOP_AFTER_TRACK, &stopAfter)) || stopAfter) return;  // the user's own
+        auto q = Service<IAIMPServicePlaybackQueue>(IID_IAIMPServicePlaybackQueue);
+        Ptr<IAIMPPlaybackQueueItem> qi;
+        Ptr<IAIMPPlaylistItem> it;
+        Ptr<IAIMPFileInfo> fi;
+        if (!q || Failed(q->GetNextTrack(qi.Out())) || !qi ||
+            Failed(qi->GetValueAsObject(AIMP_PLAYBACKQUEUEITEM_PROPID_PLAYLISTITEM, IID_IAIMPPlaylistItem, it.OutV())) || !it ||
+            Failed(it->GetValueAsObject(AIMP_PLAYLISTITEM_PROPID_FILEINFO, IID_IAIMPFileInfo, fi.OutV())) || !fi)
+            return;
+        INT32 next = 0, cur = 0;
+        fi->GetValueAsInt32(AIMP_FILEINFO_PROPID_SAMPLERATE, &next);
+        Ptr<IAIMPFileInfo> ci;
+        if (Succeeded(player->GetInfo(ci.Out())) && ci) ci->GetValueAsInt32(AIMP_FILEINFO_PROPID_SAMPLERATE, &cur);
+        if (next <= 0 || cur <= 0 || next == cur) return;
+        Ptr<IAIMPString> s;
+        tstring file, codec;
+        if (Succeeded(fi->GetValueAsObject(AIMP_FILEINFO_PROPID_FILENAME, IID_IAIMPString, s.OutV())) && s) file = FromString(s.Get());
+        if (Succeeded(fi->GetValueAsObject(AIMP_FILEINFO_PROPID_CODEC, IID_IAIMPString, s.OutV())) && s) codec = FromString(s.Get());
+        if (file.empty() || IsStream(file)) return;
+        if ((cfg.skipLossy && IsLossy(codec, file)) || !MatchSkipList(cfg.skipList, file, PlaylistName(it.Get())).empty()) return;
+        if (Failed(pl->SetValueAsInt32(AIMP_PLAYER_PROPID_STOP_AFTER_TRACK, 1))) return;
+        preArmed_ = true;
+        preItem_ = it;
+        preEndAt_ = NowMs() + (int64_t)(before * 1000);  // AIMP may stop where the crossfade would begin
+        Log(AR_T("Next track ") + Khz((uint32_t)next) + AR_T(" - AIMP stops after this track, the plugin switches before the next one starts") +
+            (cross > 0 ? AR_T(" (no crossfade into a track with another rate)") : AR_T("")));
+    }
+
+    // AIMP stopped at the end of the track: the next track is switched for and then started by the worker
+    void QueuePreStart(IAIMPPlaylistItem* item) {
+        Ptr<IAIMPFileInfo> fi;
+        if (Failed(item->GetValueAsObject(AIMP_PLAYLISTITEM_PROPID_FILEINFO, IID_IAIMPFileInfo, fi.OutV())) || !fi) return;
+        Job j;
+        j.startedMs = NowMs();
+        j.preStart = true;
+        INT32 v = 0;
+        if (Succeeded(fi->GetValueAsInt32(AIMP_FILEINFO_PROPID_SAMPLERATE, &v)) && v > 0) j.track.rate = (uint32_t)v;
+        if (Succeeded(fi->GetValueAsInt32(AIMP_FILEINFO_PROPID_BITDEPTH, &v)) && v > 0) j.track.bits = (uint32_t)v;
+        if (Succeeded(fi->GetValueAsInt32(AIMP_FILEINFO_PROPID_CHANNELS, &v)) && v > 0) j.track.channels = (uint32_t)v;
+        Ptr<IAIMPString> s;
+        if (Succeeded(fi->GetValueAsObject(AIMP_FILEINFO_PROPID_CODEC, IID_IAIMPString, s.OutV())) && s) j.track.codec = FromString(s.Get());
+        if (Succeeded(fi->GetValueAsObject(AIMP_FILEINFO_PROPID_FILENAME, IID_IAIMPString, s.OutV())) && s) j.file = FromString(s.Get());
+        if (!j.track.rate || j.file.empty()) return;
+        item->AddRef();
+        *j.item.Out() = item;
+        j.track.aimpOutput = AimpOutput();
+        j.track.lossy = IsLossy(j.track.codec, j.file);
+        j.cfg = cfg;
+        j.gen = ++gen_;
+        handledFile_ = j.file;
+        handledSkipped_ = false;
+        restartFile_.clear();
+        outputRechecks_ = 0;
+        lastOutput_ = j.track.aimpOutput;
+        stats.Update([&](Stats& st) {
+            st.tracks++;
+            st.rates[j.track.rate]++;
+            st.trackRate = j.track.rate;
+            st.trackBits = j.track.bits;
+            st.trackChannels = j.track.channels;
+            st.trackCodec = j.track.codec;
+            st.aimpOutput = j.track.aimpOutput;
+            st.trackFile = j.file;
+            st.exception.clear();
+        });
+        std::lock_guard<std::mutex> l(m_);
+        job_ = std::move(j);
+        has_ = true;
+        cv_.notify_one();
+    }
+
     void Tick() {
         if (!cfg.enabled || !player || player->GetState() != AIMP_PLAYER_STATE_PLAYING) return;
         if (handledFile_.empty() || handledSkipped_ || CurrentFile() != handledFile_) return;  // not handled (yet)
+        PreSwitchCheck();
         tstring out = AimpOutput();
         if (!lastOutput_.empty() && !out.empty() && out != lastOutput_) {
             OutputChanged(AR_T("AIMP output ") + out);
@@ -1074,10 +1481,24 @@ public:
         if (cfg.enabled == on) return;
         cfg.enabled = on;
         cfg.Save();
+        ConfigChanged();
         bitPerfect.Apply(cfg);
         Log(tstring(on ? AR_T("Plugin enabled") : AR_T("Plugin disabled")) + (how ? AR_T(" (") + tstring(how) + AR_T(")") : tstring()));
         if (on) Recheck();  // switch to the rate of the track that is playing now
+        else RequestRestore();
         if (onEnabledChanged) onEnabledChanged();
+    }
+
+    // Main thread, 2.8.1: the plugin was switched off - whatever way - so the worker puts AIMP, Voicemeeter and the
+    // devices back to the rates from before (as when AIMP closes, also without "restore when AIMP closes")
+    void RequestRestore() {
+        if (preArmed_) Disarm();
+        ++gen_;  // a switch that is still queued is not done any more
+        std::lock_guard<std::mutex> l(m_);
+        has_ = false;
+        job_ = Job();
+        restoreReq_ = true;
+        cv_.notify_one();
     }
 
     // ---- Counters are kept in the settings file, section [Statistics] (main thread)

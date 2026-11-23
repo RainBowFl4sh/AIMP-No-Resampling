@@ -143,17 +143,20 @@ inline tstring FromAnsi(const char* s) {
 inline std::string ToUtf8(const tstring& s) { return s; }
 #endif
 
-// Timestamp "hh:mm:ss"
-inline tstring ClockString() {
-    time_t t = time(nullptr);
+// Timestamp "hh:mm:ss", with milliseconds "hh:mm:ss.mmm" (log file: how long each step of a switch takes)
+inline tstring ClockString(bool millis = false) {
+    auto now = std::chrono::system_clock::now();
+    time_t t = std::chrono::system_clock::to_time_t(now);
+    int ms = (int)(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
     struct tm lt;
 #ifdef _WIN32
     localtime_s(&lt, &t);
 #else
     localtime_r(&t, &lt);
 #endif
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
+    char buf[24];
+    if (millis) snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", lt.tm_hour, lt.tm_min, lt.tm_sec, ms);
+    else snprintf(buf, sizeof(buf), "%02d:%02d:%02d", lt.tm_hour, lt.tm_min, lt.tm_sec);
     tstring r;
     for (const char* p = buf; *p; ++p) r += (TChar)*p;
     return r;
@@ -193,10 +196,11 @@ public:
 
     void Write(const tstring& msg) {
         std::lock_guard<std::mutex> g(m_);
-        tstring line = ClockString() + AR_T("  ") + msg;
+        tstring line = ClockString() + AR_T("  ") + msg;  // settings page: seconds are enough
         recent_.push_back(line);
         if (recent_.size() > 12) recent_.erase(recent_.begin());
         if (path_.empty()) return;
+        line = ClockString(true) + AR_T("  ") + msg;
 #ifdef _WIN32
         FILE* f = _wfopen(path_.c_str(), L"ab");
 #else

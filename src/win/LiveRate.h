@@ -39,6 +39,9 @@ public:
         std::vector<uint32_t> list;  // AIMP's rate list for the device
         std::wstring why;
         int64_t ms = 0;
+        // Steps (ms since the start): preferences open on the Sound Output page / AIMP confirmed the new
+        // rate after Apply. The rest of ms is closing the window.
+        int64_t msPage = 0, msConfirmed = 0;
     };
     using Done = std::function<void(const Result&)>;
 
@@ -68,11 +71,14 @@ public:
         res_ = Result();
         t0_ = NowMs();
         ticks_ = waits_ = 0;
+        phaseAt_ = t0_;
         dlg_ = nullptr;
         subclassed_ = false;
         hiding_ = true;
         state_ = kOpen;
-        timer_ = SetTimer(nullptr, 0, 50, &LiveRate::TimerProc);
+        // 2.8.1 (P4): a short tick, every step goes on as soon as AIMP is ready (no fixed pauses); the
+        // limits below are times, not ticks, so they are the same on every PC
+        timer_ = SetTimer(nullptr, 0, USER_TIMER_MINIMUM, &LiveRate::TimerProc);
         if (!timer_) Finish(false, L"no timer");
     }
 
@@ -119,7 +125,7 @@ private:
     // everything on (and is reused when the same window is opened again).
     std::vector<std::pair<HWND, WNDPROC>> chain_;
     int ticks_ = 0, waits_ = 0;
-    int64_t t0_ = 0, appliedAt_ = 0;
+    int64_t t0_ = 0, appliedAt_ = 0, phaseAt_ = 0;  // phaseAt_: NowMs() when the current step began
     uint32_t target_ = 0;
     bool pageSet_ = false, pageHad_ = false;  // Options\ActivePage set by the plugin / the user had a value
     INT32 userPage_ = 0;
@@ -339,11 +345,13 @@ private:
                 auto disp = Service<IAIMPServiceMessageDispatcher>(IID_IAIMPServiceMessageDispatcher);
                 if (!disp || !cbt_ || !cwp_) { Finish(false, L"no message service / hooks"); return; }
                 waits_ = 0;
+                phaseAt_ = NowMs();
                 prevFg_ = GetForegroundWindow();
                 prevActive_ = GetActiveWindow();
                 prevFocus_ = GetFocus();
                 OpenOnSoundOutput();
                 disp->Send(AIMP_MSG_CMD_OPTIONS, 0, nullptr);  // AIMP creates the window here (about 0.5-1.5 s)
+                phaseAt_ = NowMs();
                 if (dlg_ && !subclassed_) Subclass(dlg_);  // shown already without position change: subclass now
                 return;
             }
@@ -354,14 +362,15 @@ private:
                     ++waits_;
                     // Another page is shown (a window AIMP kept from earlier, or an AIMP that ignores the start
                     // page): Apply would save that page too, so nothing is pressed
-                    if (list && waits_ > 10) {
+                    if (list && NowMs() - phaseAt_ > 500) {
                         res_.why = L"AIMP's preferences opened on another page";
                         Close();
                         return;
                     }
-                    if (waits_ > 40) Finish(false, d ? L"Sound Output page not found" : L"AIMP's preferences did not open");
+                    if (NowMs() - phaseAt_ > 3000) Finish(false, d ? L"Sound Output page not found" : L"AIMP's preferences did not open");
                     return;
                 }
+                res_.msPage = NowMs() - t0_;
                 uint32_t cur = Shown(list);
                 if (!cur) { Finish(false, L"the rate list cannot be read"); return; }
                 // Read the whole list: top entry, then down until it does not change any more
@@ -408,10 +417,18 @@ private:
                 GiveFocusBack();  // the keys are handled by now
                 uint32_t now = readRate_ ? readRate_() : 0;
                 if (now == target_ || NowMs() - appliedAt_ > 2500) {
+                    res_.msConfirmed = NowMs() - t0_;
                     res_.got = now;
                     res_.ok = now == target_;
                     if (!res_.ok) res_.why = L"AIMP still reports " + (now ? Khz(now) : std::wstring(L"?")) + L" after Apply";
+                    // 2.8.1 (P4): AIMP plays with the new rate - the caller goes on now, the window closes
+                    // in the background meanwhile (a new switch waits for it, see Busy)
+                    res_.ms = res_.msConfirmed;
+                    Done d = std::move(done_);
+                    done_ = nullptr;
+                    Result r = res_;
                     Close();
+                    if (d) d(r);
                 }
                 return;
             }
@@ -420,7 +437,7 @@ private:
                     Finish(res_.ok, res_.why.empty() ? L"window became visible" : res_.why);
                     return;
                 }
-                if (!d || ++waits_ > 6) Finish(res_.ok, res_.why);
+                if (!d || NowMs() - phaseAt_ > 300) Finish(res_.ok, res_.why);
                 return;
             }
             default: return;
@@ -452,6 +469,7 @@ private:
     void Close() {
         state_ = kClosing;
         waits_ = 0;
+        phaseAt_ = NowMs();
         if (dlg_ && IsWindow(dlg_)) PostMessageW(dlg_, WM_CLOSE, 0, 0);
     }
 
@@ -473,7 +491,7 @@ private:
         res_.ok = ok;
         if (!ok && res_.why.empty()) res_.why = why;
         if (ok) res_.why = why;
-        res_.ms = NowMs() - t0_;
+        if (done_) res_.ms = NowMs() - t0_;  // not handed over at Apply already
         if (dlg_ && IsWindow(dlg_) && state_ != kClosing) PostMessageW(dlg_, WM_CLOSE, 0, 0);
         Done d = std::move(done_);
         done_ = nullptr;

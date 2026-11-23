@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)  # 3.19: file(ARCHIVE_CREATE ... COMPRESSION_LEVEL)
-project(PreventResampling VERSION 2.8.0 LANGUAGES CXX)
+project(PreventResampling VERSION 2.8.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

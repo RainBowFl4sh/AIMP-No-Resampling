@@ -276,7 +276,9 @@ inline WAVEFORMATEXTENSIBLE MixFormatFor(const WAVEFORMATEXTENSIBLE& dev, const 
 }
 
 // Sets a device's "default format" (shared-mode rate) and verifies the result.
-inline bool SetDeviceFormat(const std::wstring& id, WAVEFORMATEXTENSIBLE f) {
+// callMs (optional): how long Windows took for the call itself (the rest is waiting until it reports the format)
+inline bool SetDeviceFormat(const std::wstring& id, WAVEFORMATEXTENSIBLE f, int64_t* callMs = nullptr) {
+    int64_t callStart = NowMs();
     HRESULT hr = E_FAIL;
     Com<IPolicyConfig> pc;
     HRESULT co = CoCreateInstance(CLSID_PolicyConfigClient, nullptr, CLSCTX_ALL, IID_IPolicyConfig, pc.Out());
@@ -301,6 +303,7 @@ inline bool SetDeviceFormat(const std::wstring& id, WAVEFORMATEXTENSIBLE f) {
             if (FAILED(hr)) Log(L"  IPolicyConfigVista::SetDeviceFormat: " + Hex(hr));
         }
     }
+    if (callMs) *callMs = NowMs() - callStart;
     // Did it really change? (Windows sometimes reports success without changing anything)
     WAVEFORMATEXTENSIBLE check;
     for (int i = 0; i < 20; i++) {

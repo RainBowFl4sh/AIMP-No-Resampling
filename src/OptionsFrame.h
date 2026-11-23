@@ -32,10 +32,16 @@ class OptionsFrame : public ComObject<IAIMPOptionsDialogFrame> {
     Ptr<IAIMPUIButton> btBpRestart_;
     Ptr<IAIMPUILabel> lbBpInfo_;
     Ptr<IAIMPUICheckBox> cbVm_, cbVmEngine_, cbVmAllBuses_, cbVmAsio_;
+    Ptr<IAIMPUICheckBox> cbVmBus_[4];  // 2.8.1: A2..A5 one by one (shown while "all hardware outputs" is ticked)
+    int vmBusCount_ = 5;               // hardware outputs of the running Voicemeeter (5 = unknown: all shown)
     Ptr<IAIMPUISpinEdit> spSettle_;
+    Ptr<IAIMPUICheckBox> cbIdle_;      // 2.8.1: back to the start-up rates after a pause (Advanced tab)
+    Ptr<IAIMPUISpinEdit> spIdle_;
+    Ptr<IAIMPUICheckBox> cbPreSwitch_;  // 2.8.1 (P6)
     Ptr<IAIMPUIComboBox> coAimpOut_, coMode_, coWinDev_, coAsio_, coVmA1_;
     Ptr<IAIMPUIEdit> edExtra_;
     Ptr<IAIMPUILabel> lbVmStatus_;
+    Ptr<IAIMPUILabel> lbVmMore_;  // 2.8.1: note under A2-A5, only while all outputs are switched
     Ptr<IAIMPUIMemo> memo_;
     Ptr<IAIMPUIButton> btRefresh_, btReset_, btTest_;
     tstring lastStats_;
@@ -620,7 +626,11 @@ public:
 #endif
         cbVm_ = Check(v, "Follow Voicemeeter when AIMP plays into one of its virtual devices", 10, y, 455); y += 24;
         cbVmEngine_ = Check(v, "Switch the engine sample rate (Option.sr)", 28, y, 437);                     y += 24;
-        cbVmAllBuses_ = Check(v, "Switch all hardware outputs A1–A5, not only A1", 28, y, 437);         y += 24;
+        cbVmAllBuses_ = Check(v, "Switch all hardware outputs A1–A5, not only A1", 28, y, 437);         y += 22;
+        for (int b = 0; b < 4; b++)  // A2..A5 (A1 is always switched)
+            cbVmBus_[b] = Check(v, Tx(tstring(AR_T("A")) + Num(b + 2)), 46 + b * 70, y, 64);
+        y += 24;
+        lbVmMore_ = Label(v, "More outputs make switching slower - untick rarely used ones.", 28, y, 437); y += 22;
         cbVmAsio_ = Check(v, "ASIO device on A1 follows the engine rate (Option.ASIOsr)", 28, y, 437);       y += 32;
         Label(v, "A1 output device:", 10, y + 3, 195);
         coVmA1_ = Combo(v, 210, y, 255);                                                                     y += 28;
@@ -634,7 +644,8 @@ public:
                  "the bus and keep the fader at 0 dB.", 10, y, 455, 34);
 #else
         for (IAIMPPropertyList* c : std::initializer_list<IAIMPPropertyList*>{
-                 cbVm_.Get(), cbVmEngine_.Get(), cbVmAllBuses_.Get(), cbVmAsio_.Get(), coVmA1_.Get()})
+                 cbVm_.Get(), cbVmEngine_.Get(), cbVmAllBuses_.Get(), cbVmAsio_.Get(), coVmA1_.Get(),
+                 cbVmBus_[0].Get(), cbVmBus_[1].Get(), cbVmBus_[2].Get(), cbVmBus_[3].Get()})
             Enable(c, false);
 #endif
 
@@ -657,7 +668,26 @@ public:
             spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MINVALUE, 0);
             spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MAXVALUE, 5000);
             spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_INCREMENT, 50);
-        }                                                                                                    y += 32;
+        }                                                                                                    y += 30;
+        cbIdle_ = Check(st, "Back to the start-up rates after a pause of (s):", 10, y, 360);
+        if (cbIdle_) Bind(cbIdle_.Get(), AIMPUI_CONTROL_PROPID_HINT,
+                          "When nothing plays for this long (stopped or paused), AIMP, Voicemeeter and the Windows "
+                          "devices go back to the rates they had before the plugin changed them. The next track switches again.");
+        spIdle_ = Make<IAIMPUISpinEdit>(st, IID_IAIMPUISpinEdit, 375, y, 90, kRowH);
+        if (spIdle_) {
+            spIdle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUETYPE, AIMPUI_SPINEDIT_VALUETYPE_INTEGER);
+            spIdle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MINVALUE, 5);
+            spIdle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_MAXVALUE, 3600);
+            spIdle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_INCREMENT, 5);
+        }                                                                                                    y += 28;
+        cbPreSwitch_ = Check(st, "Switch before the next track starts (automatic track changes)", 10, y, 455);
+        if (cbPreSwitch_) Bind(cbPreSwitch_.Get(), AIMPUI_CONTROL_PROPID_HINT,
+                               "Near the end of a track the plugin looks at the next one. If it needs another rate, AIMP "
+                               "stops after the current track, the plugin switches and then starts the next track - it is "
+                               "not played at the old rate first. With AIMP's crossfade the current track is not mixed "
+                               "into a next track with another rate.");
+        y += 22;
+        Label(st, "With AIMP's crossfade: no mixing into a track with another rate.", 28, y, 437); y += 22;
         memo_ = Memo(st, 10, y, 455, 370 - y);
         btRefresh_ = Button(st, "Refresh", 10, 378, 110);
         btReset_ = Button(st, "Reset counters", 128, 378, 130);
@@ -778,6 +808,7 @@ public:
         vmDevices_.clear();
         if (vm.Installed()) {
             long t = vm.Type();
+            vmBusCount_ = t == 1 ? 2 : t == 2 ? 3 : 5;  // Standard A1-A2, Banana A1-A3, Potato (or unknown) A1-A5
             tstring status = t ? Trf("%1 is running", {tstring(win::Voicemeeter::TypeName(t))})
                                : Tr("Voicemeeter is installed but not running");
             if (t) {
@@ -837,6 +868,7 @@ public:
     // Enables/disables dependent controls
     void UpdateDependencies() {
         Enable(spSettle_.Get(), !Checked(cbAutoTiming_.Get()));
+        Show(spIdle_.Get(), Checked(cbIdle_.Get()));  // the field appears once the option is ticked
         Enable(cbSeamless_.Get(), Checked(cbRestart_.Get()));
         bool bp = Checked(cbBp_.Get());  // the options appear once the mode is ticked
         Show(cbBpVolume_.Get(), bp);
@@ -851,6 +883,12 @@ public:
         bool vm = Checked(cbVm_.Get());
         Enable(cbVmEngine_.Get(), vm);
         Enable(cbVmAllBuses_.Get(), vm);
+        bool all = Checked(cbVmAllBuses_.Get());
+        for (int b = 0; b < 4; b++) {  // only the outputs this Voicemeeter has
+            Show(cbVmBus_[b].Get(), all && b + 2 <= vmBusCount_);
+            Enable(cbVmBus_[b].Get(), vm);
+        }
+        Show(lbVmMore_.Get(), all);
         Enable(cbVmAsio_.Get(), vm && Checked(cbVmEngine_.Get()));
 #endif
         bool upd = Checked(cbUpdate_.Get());
@@ -869,6 +907,9 @@ public:
         SetChecked(cbBpVolume_.Get(), c.bpVolume100);
         SetChecked(cbBpGapless_.Get(), c.bpNoGapless);
         if (spSettle_) spSettle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUE, c.settleMs);
+        SetChecked(cbIdle_.Get(), c.idleRestore);
+        SetChecked(cbPreSwitch_.Get(), c.preSwitch);
+        if (spIdle_) spIdle_->SetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUE, c.idleSeconds);
         SelectMaxRate(c.maxRate);
         SetChecked(cbSkipLossy_.Get(), c.skipLossy);
         SetText(edSkip_.Get(), AIMPUI_BASEEDIT_PROPID_TEXT, c.skipList);
@@ -886,6 +927,7 @@ public:
         SetChecked(cbVm_.Get(), c.vmEnabled);
         SetChecked(cbVmEngine_.Get(), c.vmEngineRate);
         SetChecked(cbVmAllBuses_.Get(), c.vmAllBuses);
+        for (int b = 0; b < 4; b++) SetChecked(cbVmBus_[b].Get(), (c.vmBusMask & (1 << (b + 1))) != 0);
         SetChecked(cbVmAsio_.Get(), c.vmAsioRate);
 #else
         SetChecked(cbVm_.Get(), c.vmEnabled);  // shown for reference only (disabled on Linux)
@@ -913,6 +955,11 @@ public:
         INT32 v = c.settleMs;
         if (spSettle_ && Succeeded(spSettle_->GetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUE, &v)))
             c.settleMs = (std::max)(0, (std::min)((int)v, 5000));
+        c.idleRestore = Checked(cbIdle_.Get());
+        c.preSwitch = Checked(cbPreSwitch_.Get());
+        v = c.idleSeconds;
+        if (spIdle_ && Succeeded(spIdle_->GetValueAsInt32(AIMPUI_SPINEDIT_PROPID_VALUE, &v)))
+            c.idleSeconds = (std::max)(5, (std::min)((int)v, 3600));
         int m = Index(coMode_.Get());
         if (m >= 0 && m < (int)modes_.size()) c.mode = modes_[m];
         size_t nRates = 0;
@@ -934,6 +981,9 @@ public:
         c.vmEnabled = Checked(cbVm_.Get());
         c.vmEngineRate = Checked(cbVmEngine_.Get());
         c.vmAllBuses = Checked(cbVmAllBuses_.Get());
+        c.vmBusMask = 0;
+        for (int b = 0; b < 4; b++)
+            if (cbVmBus_[b] ? Checked(cbVmBus_[b].Get()) : (engine_->cfg.vmBusMask & (1 << (b + 1))) != 0) c.vmBusMask |= 1 << (b + 1);
         c.vmAsioRate = Checked(cbVmAsio_.Get());
 #endif
         c.updateCheck = Checked(cbUpdate_.Get());
@@ -954,6 +1004,7 @@ public:
         Config c = FromControls();
         bool wasEnabled = engine_->cfg.enabled;
         engine_->cfg = c;
+        engine_->ConfigChanged();
         c.Save();
 
         // Change AIMP's output only if a different device was picked on this page
@@ -987,6 +1038,7 @@ public:
         if (wasEnabled != c.enabled) {
             Log(c.enabled ? AR_T("Plugin enabled (settings page)") : AR_T("Plugin disabled (settings page)"));
             if (c.enabled) engine_->Recheck();  // switch to the rate of the track that is playing now
+            else engine_->RequestRestore();     // 2.8.1: back to the rates from before
             if (engine_->onEnabledChanged) engine_->onEnabledChanged();  // AIMP's menu
         }
         Log(AR_T("Settings saved"));
@@ -1390,7 +1442,9 @@ public:
         cbEnabled_.Reset(); cbMultiples_.Reset(); cbRestore_.Reset(); cbAutoTiming_.Reset();
         cbRestart_.Reset(); cbSeamless_.Reset(); cbAsioForce_.Reset();
         cbBp_.Reset(); cbBpVolume_.Reset(); cbBpGapless_.Reset(); lbBpStatus_.Reset(); btBpRestart_.Reset(); lbBpInfo_.Reset();
-        cbVm_.Reset(); cbVmEngine_.Reset(); cbVmAllBuses_.Reset(); cbVmAsio_.Reset();
+        cbVm_.Reset(); cbVmEngine_.Reset(); cbVmAllBuses_.Reset(); cbVmAsio_.Reset(); lbVmMore_.Reset();
+        for (auto& b : cbVmBus_) b.Reset();
+        cbIdle_.Reset(); spIdle_.Reset(); cbPreSwitch_.Reset();
         spSettle_.Reset(); coAimpOut_.Reset(); coMode_.Reset(); coWinDev_.Reset(); coAsio_.Reset(); coVmA1_.Reset();
         edExtra_.Reset(); lbVmStatus_.Reset(); memo_.Reset(); btRefresh_.Reset(); btReset_.Reset(); btTest_.Reset();
         cbUpdate_.Reset(); cbAutoInstall_.Reset(); coInterval_.Reset(); btCheck_.Reset(); btInstall_.Reset();

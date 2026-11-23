@@ -2432,7 +2432,8 @@ int main(int argc, char** argv) {
         CHECK(WaitUntil([&] { return logHas("Output changed (AIMP's preferences closed)"); }));
         CHECK(WaitUntil([&] { return logHas("AIMP: 88.2 kHz -> 96 kHz without restart"); }, 8000));
         CHECK(g_opts.visible == shown && aimpRate() == "96000" && g_opts.restarts == 0);
-        CHECK(core->config->v["Options\\ActivePage"] == "17");  // the page the user closed them on
+        // the page the user closed them on (2.8.1: put back once the hidden window has closed in the background)
+        CHECK(WaitUntil([&] { return core->config->v["Options\\ActivePage"] == "17"; }, 2000));
         //     a device that offers only a few rates (e.g. HDMI: 32, 44.1, 48 kHz): the best of them
         std::string out0 = core->player->output;
         core->player->output = "WASAPI Exclusive (Push): HDMI Monitor";

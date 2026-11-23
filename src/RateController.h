@@ -3,6 +3,7 @@
 #pragma once
 #include <ctime>
 #include <map>
+#include <set>
 
 #include "Config.h"
 #include "Hardware.h"
@@ -80,6 +81,7 @@ class RateController {
     uint32_t vmSet_ = 0;  // last Option.sr set by the plugin (Voicemeeter sometimes returns stale values)
     uint32_t asioRateSet_ = 0;
     bool asioBusy_ = false;
+    std::set<std::wstring> busyLogged_;  // devices held by Voicemeeter, logged once each
 #else
     lnx::PipeWire pw_;
 #endif
@@ -96,6 +98,15 @@ class RateController {
     }
 
 public:
+    // How long the steps of the last Apply took (ms), for the timing line in the log
+    struct Times {
+        int64_t devices = 0;  // Windows formats of the devices (Linux: PipeWire)
+        int64_t asio = 0;     // ASIO driver rate
+        int64_t vm = 0;       // Voicemeeter: rate set, engine restarted and running again
+        int64_t settle = 0;   // fixed pause afterwards
+    };
+    Times last;
+
     void SetConfig(const Config& c, const Timing& t) {
         if (c.asioDriver != cfg_.asioDriver) ResetAsio();
         cfg_ = c;
@@ -156,12 +167,31 @@ public:
         else if (toVm) {
             d.vm = true;
             d.vmEngine = cfg_.vmEngineRate;
-            for (auto& bus : vm.BusDevices(cfg_.vmAllBuses))
+            for (auto& bus : vm.BusDevices(cfg_.vmAllBuses)) {
+                if (!cfg_.BusSwitched(bus.first)) continue;  // A2-A5 ticked off on the Voicemeeter tab
                 for (auto& e : all)
                     if (!e.IsVB() && win::NamesMatch(bus.second, e.name)) add(e);
+            }
         }
         // Shared/DirectSound: AIMP's device itself is switched (exclusive/ASIO: AIMP opens it itself)
         if (havePrimary && (sharedLike || (d.vm && d.mode == OutputMode::Exclusive))) add(primary);
+        // AIMP does not play into Voicemeeter, but Voicemeeter runs and holds one of these devices on a hardware
+        // output (A1-A5): changing its Windows format would make AIMP report "Device is busy" - leave it alone
+        if (!d.vm && win::Voicemeeter::ProcessRunning() && vm.Running()) {
+            auto held = vm.BusDevices(true);
+            for (size_t i = 0; i < d.targets.size();) {
+                bool busy = false;
+                int bus = 0;
+                if (!d.targets[i].IsVB())
+                    for (auto& b : held)
+                        if (win::NamesMatch(b.second, d.targets[i].name)) { busy = true; bus = b.first; break; }
+                if (!busy) { i++; continue; }
+                if (busyLogged_.insert(d.targets[i].id).second)
+                    Log(d.targets[i].name + L" is used by Voicemeeter (A" + Num(bus + 1) +
+                        L") - the plugin leaves its Windows format alone");
+                d.targets.erase(d.targets.begin() + i);
+            }
+        }
 
         if (d.chain.empty()) {
             for (auto& e : d.targets) d.chain += (d.chain.empty() ? L"" : L" -> ") + e.name;
@@ -296,8 +326,20 @@ public:
     }
 
     // Returns the resulting output rate (0 = error)
-    uint32_t Apply(const Decision& d) {
+    // settle = false: the caller waits anyway (AIMP's own rate is changed right afterwards), no extra pause
+    uint32_t Apply(const Decision& d, bool settle = true) {
+        last = Times();
+        int64_t step = NowMs();
         bool ok = true, formatsChanged = false;
+        // 2.8.1 (P8): Windows needs about a third of a second per device, so all devices that change are
+        // switched at the same time (one thread each); the log lines keep the order of the devices
+        struct Change {
+            const win::Endpoint* e;
+            WAVEFORMATEXTENSIBLE f, want;
+            bool r = false;
+            int64_t callMs = 0, ms = 0;  // Windows' call / until the new format is reported
+        };
+        std::vector<Change> changes;
         for (size_t i = 0; i < d.targets.size(); i++) {
             const win::Endpoint& e = d.targets[i];
             WAVEFORMATEXTENSIBLE f;
@@ -305,14 +347,38 @@ public:
             WAVEFORMATEXTENSIBLE want = Target(f, d, i);
             if (win::SameFormat(f, want)) continue;
             if (!original_.count(e.id)) original_[e.id] = f;
-            bool r = win::SetDeviceFormat(e.id, want);
-            ok &= r;
-            formatsChanged |= r;
-            bool bitsChange = win::ValidBits(f) != win::ValidBits(want) || win::IsFloat(f) != win::IsFloat(want);
-            Log(e.name + L": " + Khz(f.Format.nSamplesPerSec) + (bitsChange ? L" / " + win::BitsText(f) : std::wstring()) + L" -> " +
-                Khz(d.rate) + (bitsChange ? L" / " + win::BitsText(want) : std::wstring()) + (r ? L"  OK" : L"  FAILED"));
+            Change c;
+            c.e = &e;
+            c.f = f;
+            c.want = want;
+            changes.push_back(c);
+        }
+        if (changes.size() == 1) {
+            int64_t s = NowMs();
+            changes[0].r = win::SetDeviceFormat(changes[0].e->id, changes[0].want, &changes[0].callMs);
+            changes[0].ms = NowMs() - s;
+        } else if (changes.size() > 1) {
+            std::vector<std::thread> th;
+            for (auto& c : changes)
+                th.emplace_back([&c] {
+                    HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                    int64_t s = NowMs();
+                    c.r = win::SetDeviceFormat(c.e->id, c.want, &c.callMs);
+                    c.ms = NowMs() - s;
+                    if (SUCCEEDED(co)) CoUninitialize();
+                });
+            for (auto& t : th) t.join();
+        }
+        for (auto& c : changes) {
+            ok &= c.r;
+            formatsChanged |= c.r;
+            bool bitsChange = win::ValidBits(c.f) != win::ValidBits(c.want) || win::IsFloat(c.f) != win::IsFloat(c.want);
+            Log(c.e->name + L": " + Khz(c.f.Format.nSamplesPerSec) + (bitsChange ? L" / " + win::BitsText(c.f) : std::wstring()) +
+                L" -> " + Khz(d.rate) + (bitsChange ? L" / " + win::BitsText(c.want) : std::wstring()) + (c.r ? L"  OK" : L"  FAILED") + L" (" + Num(c.ms) + L" ms, Windows call " + Num(c.callMs) + L" ms)");
         }
         uint32_t result = ok ? d.rate : 0;
+        last.devices = NowMs() - step;
+        step = NowMs();
 
         if (d.asioDirect) {
             win::AsioSession s(d.asio);
@@ -333,6 +399,9 @@ public:
                 }
             }
         }
+
+        last.asio = NowMs() - step;
+        step = NowMs();
 
         if (d.vm) {
             auto& vm = win::Voicemeeter::Get();
@@ -367,13 +436,22 @@ public:
                 }
             }
         }
-        SleepMs(timing_.settleMs);
+        last.vm = NowMs() - step;
+        step = NowMs();
+        if (settle) SleepMs(timing_.settleMs);
+        last.settle = NowMs() - step;
         return result;
     }
 
-    // When AIMP closes: restore the original formats (if enabled)
-    void Shutdown() {
-        if (cfg_.restoreOnExit) {
+    // Something was changed by the plugin that Shutdown would put back (idle restore)
+    bool HasChanges() const {
+        return !original_.empty() || (vmUsed_ && vmSet_ && vmOriginalRate_ && vmSet_ != vmOriginalRate_) ||
+               win::Voicemeeter::Get().AsioRateOriginal() >= 0;
+    }
+
+    // When AIMP closes: restore the original formats (if enabled). force: always (idle restore, 2.8.1)
+    void Shutdown(bool force = false) {
+        if (cfg_.restoreOnExit || force) {
             auto& vm = win::Voicemeeter::Get();
             bool vmRunning = vmUsed_ && vm.Running();
             bool engine = vmRunning && vmOriginalRate_ && vmSet_ && vmSet_ != vmOriginalRate_;
@@ -518,21 +596,30 @@ public:
         return d;
     }
 
-    uint32_t Apply(const Decision& d) {
+    uint32_t Apply(const Decision& d, bool settle = true) {
+        (void)settle;
         if (d.mode != OutputMode::PipeWire) return d.rate;
         if (!lnx::PipeWire::Available()) {
             Log("pw-metadata not found (is PipeWire installed?)");
             return 0;
         }
+        last = Times();
+        int64_t step = NowMs();
         uint32_t before = pw_.Forced();
         bool ok = pw_.ForceRate(d.rate);
         Log("PipeWire: clock.force-rate " + (before ? Khz(before) : std::string("auto")) + " -> " + Khz(d.rate) +
             (ok ? "  OK" : "  FAILED"));
+        last.devices = NowMs() - step;
+        step = NowMs();
         SleepMs(timing_.settleMs);
+        last.settle = NowMs() - step;
         return ok ? d.rate : 0;
     }
 
-    void Shutdown() {
+    bool HasChanges() const { return pw_.Forced() != 0; }
+
+    void Shutdown(bool force = false) {
+        (void)force;
         if (pw_.Forced()) {
             pw_.Release();
             Log("PipeWire: clock.force-rate released");

@@ -71,6 +71,16 @@ struct Config {
     bool vmEngineRate = true;       // set Option.sr to the track rate
     bool vmAsioRate = true;         // Option.ASIOsr = 1 (ASIO device on A1 follows Option.sr)
     bool vmAllBuses = true;         // switch the Windows devices on A2..A5 too, not only A1
+    int vmBusMask = 0x1E;           // 2.8.1: which of A2..A5 (bit 1..4) with vmAllBuses; A1 always
+    bool BusSwitched(int bus) const { return bus == 0 || (vmAllBuses && (vmBusMask & (1 << bus))); }
+
+    // 2.8.1: after this long without playback, AIMP, Voicemeeter and the devices go back to the rates from
+    // before the plugin changed them (Advanced tab)
+    bool idleRestore = false;
+    int idleSeconds = 30;
+    // 2.8.1 (P6): at the end of a track, AIMP stops after it if the next one needs another rate; the plugin
+    // switches and starts the next track then (automatic track changes only)
+    bool preSwitch = false;
 
     // Update check (About tab)
     bool updateCheck = true;        // look for a new release on GitHub
@@ -115,6 +125,10 @@ struct Config {
         vmEngineRate = i.Bool(s, AR_T("VoicemeeterEngineRate"), vmEngineRate);
         vmAsioRate = i.Bool(s, AR_T("VoicemeeterAsioRate"), vmAsioRate);
         vmAllBuses = i.Bool(s, AR_T("VoicemeeterAllBuses"), vmAllBuses);
+        vmBusMask = (int)i.Int(s, AR_T("VoicemeeterBusMask"), vmBusMask) & 0x1E;
+        idleRestore = i.Bool(s, AR_T("IdleRestore"), idleRestore);
+        idleSeconds = (int)(std::max)(5LL, (std::min)(i.Int(s, AR_T("IdleSeconds"), idleSeconds), 3600LL));
+        preSwitch = i.Bool(s, AR_T("PreSwitchNextTrack"), preSwitch);
         updateCheck = i.Bool(s, AR_T("UpdateCheck"), updateCheck);
         updateInterval = (int)(std::max)(0LL, (std::min)(i.Int(s, AR_T("UpdateInterval"), updateInterval), 3LL));
         updateAutoInstall = i.Bool(s, AR_T("UpdateAutoInstall"), updateAutoInstall);
@@ -147,6 +161,10 @@ struct Config {
         i.SetBool(s, AR_T("VoicemeeterEngineRate"), vmEngineRate);
         i.SetBool(s, AR_T("VoicemeeterAsioRate"), vmAsioRate);
         i.SetBool(s, AR_T("VoicemeeterAllBuses"), vmAllBuses);
+        i.Set(s, AR_T("VoicemeeterBusMask"), (long long)vmBusMask);
+        i.SetBool(s, AR_T("IdleRestore"), idleRestore);
+        i.Set(s, AR_T("IdleSeconds"), (long long)idleSeconds);
+        i.SetBool(s, AR_T("PreSwitchNextTrack"), preSwitch);
         i.SetBool(s, AR_T("UpdateCheck"), updateCheck);
         i.Set(s, AR_T("UpdateInterval"), (long long)updateInterval);
         i.SetBool(s, AR_T("UpdateAutoInstall"), updateAutoInstall);

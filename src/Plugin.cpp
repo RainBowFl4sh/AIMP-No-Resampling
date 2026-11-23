@@ -142,7 +142,10 @@ public:
                     if (g_frame && g_frame->IsOpen()) g_frame->RefreshStats();
                 });
         }
-        else if (msg == (DWORD)AIMP_MSG_EVENT_TERMINATING) g_terminating = true;
+        else if (msg == (DWORD)AIMP_MSG_EVENT_TERMINATING) {
+            g_terminating = true;
+            g_engine->OnTerminating();
+        }
         else if (msg == (DWORD)AIMP_MSG_EVENT_LOADED) {
             g_engine->bitPerfect.Apply(g_engine->cfg);
             g_engine->ResumeAfterRestart();
@@ -261,6 +264,7 @@ public:
             }
         }
         e->cfg.Load();
+        e->ConfigChanged();
         CurrentLanguage() = ResolveLanguage(e->cfg.language);
         {
             tstring aimpLang;

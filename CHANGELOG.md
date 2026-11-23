@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.8.1
+
+Up to 37 % faster sample rate changes than 2.8 with Voicemeeter (1.64 → 1.03 s of silence, ASIO into Voicemeeter Virtual ASIO) and up to 24 % without Voicemeeter (1.29 → 0.98 s from track start until the music plays again, DirectSound to the DAC; WASAPI exclusive 14 % faster). Measured with the same settings on Windows 11 with a FiiO KA11.
+
+New:
+- Switching the plugin off - on the General tab, in AIMP's menu or with the hotkey - puts AIMP, Voicemeeter and the Windows devices back to the rates they had before the plugin changed them, right away (until now only when AIMP closed). A playing track continues at the same position
+- Advanced tab: "Back to the start-up rates after a pause of (s)". When nothing plays for this long (stopped or paused, 30 s by default), AIMP, Voicemeeter and the devices go back to the rates from before, so other programs run at your usual rate again; the next track switches as usual. Off by default
+- Advanced tab: "Switch before the next track starts" (off by default). Near the end of a track the plugin looks at the next one; if it needs another rate, AIMP stops after the current track, the plugin switches and then starts the next track, so it is never played at the old rate first. For automatic track changes; AIMP's own "stop after track" is left alone. With AIMP's crossfade it looks earlier (before the crossfade would begin); the current track then ends without being mixed into a next track with another rate - the tab and the log say so
+- Voicemeeter tab: with "Switch all hardware outputs" ticked, each of A2-A5 can be ticked off on its own (only the outputs of your Voicemeeter version are shown). A slow device you rarely use no longer delays every change. The tab notes that every extra output makes switching slower
+- The log shows how long a sample rate change takes: the time stamps have milliseconds, and every change ends with a line "Timing: ..." with each step (stopping playback, devices, Voicemeeter, AIMP's rate, the pause before playback continues) and how long the music was silent
+
+Faster:
+- Windows devices behind Voicemeeter (A1-A5) are switched at the same time instead of one after the other - Windows needs about a third of a second per device
+- AIMP's rate: no fixed steps any more - every step goes on as soon as AIMP is ready, so the change takes only as long as the PC needs. The music continues as soon as AIMP confirms the new rate; its hidden preferences close in the background
+- AIMP's rate changes at the same time as the devices behind it (Windows formats, Voicemeeter's engine) instead of afterwards
+- The log shows for every device how long Windows took
+- Without a running Voicemeeter, every track was about 0.17 s slower: the plugin tried to connect to Voicemeeter each time. It now does so only while a Voicemeeter program runs
+
+Fixed:
+- DirectSound or WASAPI straight to a device that Voicemeeter uses on one of its outputs (A1-A5): the plugin no longer changes that device's Windows format, which made AIMP report "Device is busy". The log names the device once
+
 ## 2.8.0
 
 New:
